@@ -6,21 +6,26 @@
 <title>Рисование пальцем в воздухе</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
-  body {
-    background: #0a0a1a;
-    font-family: 'Segoe UI', system-ui, sans-serif;
-    overflow: hidden;
-  }
+  body { background: #0a0a1a; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
   #app { position: relative; width: 100vw; height: 100vh; }
 
+  /* ВИДЕО зеркалим — чтобы видеть себя как в зеркале */
   video {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
     object-fit: cover;
     transform: scaleX(-1);
-    filter: brightness(1.05) contrast(1.05);
   }
-  canvas {
+
+  /* РИСУНОК — БЕЗ зеркала. Координаты уже пересчитаны вручную. */
+  #drawCanvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+
+  /* ОВЕРЛЕЙ (кружки/квадрат) — тоже без зеркала */
+  #overlayCanvas {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
     pointer-events: none;
@@ -28,9 +33,9 @@
 
   #status {
     position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-    background: rgba(0,0,0,0.7); color: #fff;
-    padding: 12px 24px; border-radius: 40px;
-    font-size: 16px; font-weight: 500;
+    background: rgba(0,0,0,0.75); color: #fff;
+    padding: 10px 22px; border-radius: 40px;
+    font-size: 15px; font-weight: 500;
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255,255,255,0.15);
     z-index: 100; text-align: center;
@@ -46,7 +51,7 @@
     padding: 0 10px;
   }
   .controls button {
-    padding: 12px 20px;
+    padding: 11px 18px;
     border: 1px solid rgba(255,255,255,0.2);
     border-radius: 40px;
     background: rgba(20,20,40,0.8);
@@ -55,33 +60,26 @@
     cursor: pointer;
     backdrop-filter: blur(12px);
     transition: all 0.2s;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
     white-space: nowrap;
   }
-  .controls button:hover { background: rgba(60,60,120,0.9); transform: translateY(-2px); }
-  .controls button:active { transform: translateY(0) scale(0.97); }
-
+  .controls button:hover { background: rgba(60,60,120,0.9); }
   .controls button.active {
-    background: #00e5ff;
-    color: #001a22;
+    background: #00e5ff; color: #001a22;
     border-color: #00e5ff;
     box-shadow: 0 0 20px rgba(0,229,255,0.6);
   }
   .controls button.clear { background: rgba(220,50,50,0.75); }
   .controls button.clear:hover { background: rgba(255,60,60,0.95); }
 
-  /* Переключатель режимов */
   .mode-indicator {
     position: fixed; top: 20px; left: 20px;
     background: rgba(0,0,0,0.7);
     color: #7cff7c;
-    padding: 8px 16px;
-    border-radius: 30px;
+    padding: 8px 16px; border-radius: 30px;
     font-size: 13px; font-weight: 600;
     backdrop-filter: blur(10px);
     border: 1px solid rgba(124,255,124,0.3);
     z-index: 100;
-    transition: all 0.2s;
   }
 
   @media (max-width: 600px) {
@@ -95,7 +93,8 @@
 
 <div id="app">
   <video id="video" autoplay playsinline muted></video>
-  <canvas id="canvas"></canvas>
+  <canvas id="drawCanvas"></canvas>
+  <canvas id="overlayCanvas"></canvas>
 
   <div id="status">Запрос доступа к камере...</div>
   <div class="mode-indicator" id="modeIndicator">Режим: рисование</div>
@@ -114,94 +113,116 @@
 (function() {
 'use strict';
 
+// ============================================================
+// DOM
+// ============================================================
 const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+const drawCanvas = document.getElementById('drawCanvas');
+const overlayCanvas = document.getElementById('overlayCanvas');
+const drawCtx = drawCanvas.getContext('2d');
+const overlayCtx = overlayCanvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const trackBtn = document.getElementById('trackBtn');
 const squareBtn = document.getElementById('squareBtn');
 const clearBtn = document.getElementById('clearBtn');
 const modeIndicator = document.getElementById('modeIndicator');
 
-// ================================================================
-// НАСТРОЙКИ — крутите тут
-// ================================================================
-
-// Сглаживание линии (0 = без отставания, 1 = сильное отставание)
-// 0.75 даёт заметное "догоняние" — как вы и просили
-const SMOOTHING = 0.75;
-
-// Инверсия по X.
-// Если палец идёт вправо, а линия влево — оставьте true.
-// Если хотите наоборот — поставьте false.
-const INVERT_X = false;
-
-// Толщина и цвет линии рисования
+// ============================================================
+// НАСТРОЙКИ
+// ============================================================
+const SMOOTHING = 0.55;            // 0 = без отставания, 0.9 = сильное
 const LINE_WIDTH = 8;
 const LINE_COLOR = '#00e5ff';
 const GLOW_COLOR = 'rgba(0,229,255,0.4)';
 
-// Цвета отслеживания пальцев
 const TRACK_COLOR = '#ff3355';
-const TRACK_GLOW = 'rgba(255,51,85,0.6)';
-const TRACK_RADIUS = 10;
+const TRACK_RADIUS = 12;
 
-// Цвета квадрата
 const SQUARE_COLOR = '#ffcc00';
-const SQUARE_GLOW = 'rgba(255,204,0,0.6)';
 
-// ================================================================
-
-// Состояние
-let isDrawing = false;
-let lastPoint = null;
+// ============================================================
+// СОСТОЯНИЕ
+// ============================================================
 let canvasWidth = 0;
 let canvasHeight = 0;
 let camera = null;
 
-// Режимы
-let mode = 'draw';        // 'draw' | 'track' | 'square'
-let square = {            // текущий квадрат (в пикселях canvas)
-  x: 0, y: 0, w: 200, h: 200,
-  active: false
-};
+let mode = 'draw';  // 'draw' | 'track' | 'square'
 
-// ================================================================
-// CANVAS
-// ================================================================
-function resizeCanvas() {
-  const dpr = window.devicePixelRatio || 1;
+let isDrawing = false;
+let lastPoint = null;
+
+let square = { x: 0, y: 0, w: 0, h: 0, active: false };
+
+// ============================================================
+// CANVAS SIZE
+// ============================================================
+function resizeCanvases() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   canvasWidth = window.innerWidth;
   canvasHeight = window.innerHeight;
-  canvas.width = canvasWidth * dpr;
-  canvas.height = canvasHeight * dpr;
-  canvas.style.width = canvasWidth + 'px';
-  canvas.style.height = canvasHeight + 'px';
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  setupStyle();
+
+  for (const c of [drawCanvas, overlayCanvas]) {
+    c.width = canvasWidth * dpr;
+    c.height = canvasHeight * dpr;
+    c.style.width = canvasWidth + 'px';
+    c.style.height = canvasHeight + 'px';
+  }
+
+  drawCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  overlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  setupDrawStyle();
 }
 
-function setupStyle() {
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = LINE_WIDTH;
-  ctx.strokeStyle = LINE_COLOR;
-  ctx.shadowColor = GLOW_COLOR;
-  ctx.shadowBlur = 14;
+function setupDrawStyle() {
+  drawCtx.lineCap = 'round';
+  drawCtx.lineJoin = 'round';
+  drawCtx.lineWidth = LINE_WIDTH;
+  drawCtx.strokeStyle = LINE_COLOR;
+  drawCtx.shadowColor = GLOW_COLOR;
+  drawCtx.shadowBlur = 12;
 }
 
-window.addEventListener('resize', resizeCanvas);
+window.addEventListener('resize', () => {
+  // сохраняем текущий рисунок
+  const snapshot = document.createElement('canvas');
+  snapshot.width = drawCanvas.width;
+  snapshot.height = drawCanvas.height;
+  snapshot.getContext('2d').drawImage(drawCanvas, 0, 0);
 
-function clearCanvas() {
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  resizeCanvases();
+
+  drawCtx.save();
+  drawCtx.setTransform(1, 0, 0, 1, 0, 0);
+  drawCtx.drawImage(snapshot, 0, 0);
+  drawCtx.restore();
+});
+
+// ============================================================
+// ОЧИСТКА
+// ============================================================
+function clearAll() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  drawCtx.save();
+  drawCtx.setTransform(1, 0, 0, 1, 0, 0);
+  drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+  drawCtx.restore();
+
+  overlayCtx.save();
+  overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  overlayCtx.restore();
+
   lastPoint = null;
+  isDrawing = false;
   square.active = false;
 }
-clearBtn.addEventListener('click', clearCanvas);
+clearBtn.addEventListener('click', clearAll);
 
-// ================================================================
+// ============================================================
 // СТАТУС
-// ================================================================
+// ============================================================
 function setStatus(html, warn = false) {
   statusEl.innerHTML = html;
   statusEl.classList.remove('hidden');
@@ -218,50 +239,57 @@ function updateModeIndicator() {
   modeIndicator.textContent = labels[mode];
 }
 
-// ================================================================
+// ============================================================
 // КНОПКИ
-// ================================================================
+// ============================================================
 trackBtn.addEventListener('click', () => {
   mode = (mode === 'track') ? 'draw' : 'track';
-  square.active = false;
-  lastPoint = null;
   isDrawing = false;
+  lastPoint = null;
+  square.active = false;
+
   trackBtn.classList.toggle('active', mode === 'track');
   squareBtn.classList.toggle('active', mode === 'square');
-  updateModeIndicator();
 
-  if (mode === 'track') {
-    setStatus('👋 <span class="highlight">Отслеживание пальцев</span> — кружки на кончиках всех пальцев');
-  } else {
-    setStatus('✋ <span class="highlight">Рисование</span> — ведите указательным пальцем');
-  }
+  // Для квадрата нужны 2 руки, для остальных — 1 (быстрее)
+  hands.setOptions({ maxNumHands: mode === 'square' ? 2 : 1 });
+
+  updateModeIndicator();
+  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  setStatus(mode === 'track'
+    ? '👋 <span class="highlight">Отслеживание</span>: кружки на кончиках пальцев'
+    : '✋ Ведите указательным пальцем');
 });
 
 squareBtn.addEventListener('click', () => {
   mode = (mode === 'square') ? 'draw' : 'square';
-  lastPoint = null;
   isDrawing = false;
+  lastPoint = null;
   square.active = false;
+
   squareBtn.classList.toggle('active', mode === 'square');
   trackBtn.classList.toggle('active', mode === 'track');
-  updateModeIndicator();
 
-  if (mode === 'square') {
-    setStatus('⬜ <span class="highlight">Квадрат</span> — покажите две руки и разводите указательные пальцы');
-  } else {
-    setStatus('✋ <span class="highlight">Рисование</span> — ведите указательным пальцем');
-  }
+  // Для квадрата нужны 2 руки, для остальных — 1 (быстрее)
+  hands.setOptions({ maxNumHands: mode === 'square' ? 2 : 1 });
+
+  updateModeIndicator();
+  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  setStatus(mode === 'square'
+    ? '⬜ <span class="highlight">Квадрат</span>: покажите две руки и разводите указательные пальцы'
+    : '✋ Ведите указательным пальцем');
 });
 
-// ================================================================
+// ============================================================
 // УТИЛИТЫ
-// ================================================================
+// ============================================================
 function dist(a, b) {
   const dx = a.x - b.x, dy = a.y - b.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// Проверка "выпрямлен ли указательный палец"
 function isIndexExtended(lm) {
   const wrist = lm[0];
   const tip = lm[8];
@@ -269,138 +297,148 @@ function isIndexExtended(lm) {
   return dist(wrist, tip) > dist(wrist, mcp) * 1.15;
 }
 
-// Перевод нормализованной точки MediaPipe в пиксели canvas
-// С учётом INVERT_X
-function toScreen(pt) {
-  const x = INVERT_X ? (1 - pt.x) * canvasWidth : pt.x * canvasWidth;
-  const y = pt.y * canvasHeight;
-  return { x, y };
+// ------------------------------------------------------------
+// ГЛАВНОЕ: перевод нормализованных координат в пиксели canvas
+// ------------------------------------------------------------
+// MediaPipe отдаёт координаты в системе ЗЕРКАЛЬНОГО видео (selfie).
+// Нормализованный x: 0 = левый край КАДРА камеры.
+// Но так как видео на экране отражено scaleX(-1), левый край кадра
+// отображается СПРАВА. Значит на экране:
+//    screenX = (1 - normX) * width
+//
+// Это даёт: рука влево → на экране влево → линия влево.
+function normToScreen(normX, normY) {
+  return {
+    x: (1 - normX) * canvasWidth,
+    y: normY * canvasHeight
+  };
 }
 
-// ================================================================
-// РИСОВАНИЕ ЛИНИИ (с интерполяцией)
-// ================================================================
+// ============================================================
+// РЕЖИМ РИСОВАНИЯ
+// ============================================================
 function drawStroke(from, to) {
-  const distance = dist(from, to);
-  const maxStep = 6;
+  const d = dist(from, to);
+  const maxStep = 8;
 
-  if (distance < maxStep) {
-    ctx.beginPath();
-    ctx.moveTo(from.x, from.y);
-    ctx.lineTo(to.x, to.y);
-    ctx.stroke();
-    return;
-  }
+  drawCtx.beginPath();
+  drawCtx.moveTo(from.x, from.y);
 
-  const steps = Math.ceil(distance / maxStep);
-  ctx.beginPath();
-  ctx.moveTo(from.x, from.y);
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    ctx.lineTo(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+  if (d < maxStep) {
+    drawCtx.lineTo(to.x, to.y);
+  } else {
+    const steps = Math.ceil(d / maxStep);
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      drawCtx.lineTo(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+    }
   }
-  ctx.stroke();
+  drawCtx.stroke();
 }
 
-// ================================================================
-// РИСОВАНИЕ КРУЖКОВ НА КОНЧИКАХ ПАЛЬЦЕВ
-// ================================================================
-// Индексы MediaPipe для кончиков: 4 (большой), 8 (указ.), 12 (средний), 16 (безымянный), 20 (мизинец)
-// Плюс ключевые точки: 0 (запястье), 5,9,13,17 (основания пальцев)
-const TRACK_INDICES = {
-  tips:    [4, 8, 12, 16, 20],
-  knuckles:[0, 5, 9, 13, 17],
-  all:     [0, 4, 5, 8, 9, 12, 13, 16, 17, 20]
-};
+function handleDrawMode(handsData) {
+  if (handsData.length > 0) {
+    const lm = handsData[0];
+    if (isIndexExtended(lm)) {
+      const raw = normToScreen(lm[8].x, lm[8].y);
 
-function drawTracking(lm) {
-  ctx.save();
-  ctx.shadowColor = TRACK_GLOW;
-  ctx.shadowBlur = 18;
+      let point;
+      if (lastPoint) {
+        point = {
+          x: lastPoint.x * SMOOTHING + raw.x * (1 - SMOOTHING),
+          y: lastPoint.y * SMOOTHING + raw.y * (1 - SMOOTHING)
+        };
+      } else {
+        point = raw;
+        // Начальная точка
+        drawCtx.beginPath();
+        drawCtx.arc(point.x, point.y, LINE_WIDTH / 2, 0, Math.PI * 2);
+        drawCtx.fillStyle = LINE_COLOR;
+        drawCtx.fill();
+      }
 
-  // Кончики пальцев — крупные кружки
-  ctx.fillStyle = TRACK_COLOR;
-  for (const idx of TRACK_INDICES.tips) {
-    const p = toScreen(lm[idx]);
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, TRACK_RADIUS, 0, Math.PI * 2);
-    ctx.fill();
+      if (isDrawing && lastPoint) {
+        drawStroke(lastPoint, point);
+      }
+
+      isDrawing = true;
+      lastPoint = point;
+    } else {
+      isDrawing = false;
+      lastPoint = null;
+    }
+  } else {
+    isDrawing = false;
+    lastPoint = null;
   }
-
-  // Основания / запястье — кружки поменьше
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  for (const idx of TRACK_INDICES.knuckles) {
-    const p = toScreen(lm[idx]);
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, TRACK_RADIUS * 0.6, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Подписываем указательный палец цифрой
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 12px sans-serif';
-  ctx.textAlign = 'center';
-  const tip8 = toScreen(lm[8]);
-  ctx.fillText('8', tip8.x, tip8.y - TRACK_RADIUS - 4);
-
-  ctx.restore();
 }
 
-// ================================================================
-// РЕЖИМ "КВАДРАТ"
-// ================================================================
-// Логика: если видим одну руку с поднятым указательным — фиксируем "первый угол".
-// Если видим вторую руку — "второй угол", растягиваем квадрат между ними.
-// Если рук две — берём указательные пальцы обеих.
-//
-// Из-за maxNumHands=1 (для скорости) будем использовать одну руку:
-// указательный палец задаёт один угол, а противоположный угол — смещён
-// относительно указательного на фиксированный отступ.
-// Но лучше сделать двумя руками — увеличим maxNumHands до 2.
-//
-// Здесь: если рука одна — квадрат растягивается относительно центра ладони,
-// если руки две — между указательными пальцами двух рук.
+// ============================================================
+// РЕЖИМ ОТСЛЕЖИВАНИЯ ПАЛЬЦЕВ
+// ============================================================
+const TIP_INDICES = [4, 8, 12, 16, 20];
+const KNUCKLE_INDICES = [0, 5, 9, 13, 17];
 
-function drawSquareFromHands(handsData) {
-  ctx.save();
-  ctx.shadowColor = SQUARE_GLOW;
-  ctx.shadowBlur = 20;
-  ctx.strokeStyle = SQUARE_COLOR;
-  ctx.lineWidth = 5;
-  ctx.fillStyle = 'rgba(255,204,0,0.15)';
+function drawTrackingOverlay(handsData) {
+  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  overlayCtx.save();
+  overlayCtx.shadowBlur = 16;
+
+  for (const lm of handsData) {
+    // Кончики — крупные красные
+    overlayCtx.fillStyle = TRACK_COLOR;
+    overlayCtx.shadowColor = 'rgba(255,51,85,0.7)';
+    for (const idx of TIP_INDICES) {
+      const p = normToScreen(lm[idx].x, lm[idx].y);
+      overlayCtx.beginPath();
+      overlayCtx.arc(p.x, p.y, TRACK_RADIUS, 0, Math.PI * 2);
+      overlayCtx.fill();
+    }
+
+    // Основания/запястье — белые поменьше
+    overlayCtx.fillStyle = 'rgba(255,255,255,0.95)';
+    overlayCtx.shadowColor = 'rgba(255,255,255,0.6)';
+    for (const idx of KNUCKLE_INDICES) {
+      const p = normToScreen(lm[idx].x, lm[idx].y);
+      overlayCtx.beginPath();
+      overlayCtx.arc(p.x, p.y, TRACK_RADIUS * 0.55, 0, Math.PI * 2);
+      overlayCtx.fill();
+    }
+  }
+
+  overlayCtx.restore();
+}
+
+// ============================================================
+// РЕЖИМ КВАДРАТА
+// ============================================================
+function drawSquareOverlay(handsData) {
+  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
 
   let x1, y1, x2, y2;
 
   if (handsData.length >= 2) {
-    // Две руки — углы квадрата по указательным пальцам
-    const a = toScreen(handsData[0][8]);
-    const b = toScreen(handsData[1][8]);
+    // Две руки: указательные пальцы — противоположные углы
+    const a = normToScreen(handsData[0][8].x, handsData[0][8].y);
+    const b = normToScreen(handsData[1][8].x, handsData[1][8].y);
     x1 = a.x; y1 = a.y;
     x2 = b.x; y2 = b.y;
     square.active = true;
   } else if (handsData.length === 1) {
-    // Одна рука — фиксируем первый угол, второй растёт относительно центра ладони
-    const tip = toScreen(handsData[0][8]);
-    const palm = toScreen(handsData[0][9]); // середина ладони
-    x1 = tip.x;
-    y1 = tip.y;
-    // Вторая точка — зеркально относительно центра ладони
+    // Одна рука: указательный палец — угол, второй угол растёт от центра ладони
+    const tip = normToScreen(handsData[0][8].x, handsData[0][8].y);
+    const palm = normToScreen(handsData[0][9].x, handsData[0][9].y);
+    x1 = tip.x; y1 = tip.y;
     x2 = palm.x + (palm.x - tip.x) * 1.5;
     y2 = palm.y + (palm.y - tip.y) * 1.5;
     square.active = true;
   } else {
-    // Рук нет — не рисуем, но если квадрат был — оставляем его на месте
-    if (square.active) {
-      ctx.restore();
-      drawSquare(square.x, square.y, square.w, square.h);
-      return;
-    }
-    ctx.restore();
+    // Рук нет — квадрат остаётся на месте
+    if (square.active) drawSquareShape(square.x, square.y, square.w, square.h);
     return;
   }
 
-  // Приводим к прямоугольнику (left, top, width, height)
   const left = Math.min(x1, x2);
   const top = Math.min(y1, y2);
   const w = Math.abs(x2 - x1);
@@ -411,215 +449,84 @@ function drawSquareFromHands(handsData) {
   square.w = w;
   square.h = h;
 
-  // Рисуем прямоугольник
-  ctx.fillRect(left, top, w, h);
-  ctx.strokeRect(left, top, w, h);
+  drawSquareShape(left, top, w, h);
+}
 
-  // Уголки-маркеры
-  ctx.fillStyle = SQUARE_COLOR;
-  for (const [cx, cy] of [[left, top], [left + w, top], [left, top + h], [left + w, top + h]]) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
-    ctx.fill();
+function drawSquareShape(left, top, w, h) {
+  overlayCtx.save();
+  overlayCtx.shadowColor = 'rgba(255,204,0,0.7)';
+  overlayCtx.shadowBlur = 20;
+
+  // Заливка
+  overlayCtx.fillStyle = 'rgba(255,204,0,0.15)';
+  overlayCtx.fillRect(left, top, w, h);
+
+  // Контур
+  overlayCtx.strokeStyle = SQUARE_COLOR;
+  overlayCtx.lineWidth = 5;
+  overlayCtx.strokeRect(left, top, w, h);
+
+  // Уголки
+  overlayCtx.fillStyle = SQUARE_COLOR;
+  const corners = [
+    [left, top],
+    [left + w, top],
+    [left, top + h],
+    [left + w, top + h]
+  ];
+  for (const [cx, cy] of corners) {
+    overlayCtx.beginPath();
+    overlayCtx.arc(cx, cy, 9, 0, Math.PI * 2);
+    overlayCtx.fill();
   }
 
-  // Подпись с размерами
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 14px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(`${Math.round(w)} × ${Math.round(h)}`, left + w / 2, top - 10);
+  // Размер
+  overlayCtx.shadowBlur = 0;
+  overlayCtx.fillStyle = '#fff';
+  overlayCtx.font = 'bold 14px sans-serif';
+  overlayCtx.textAlign = 'center';
+  overlayCtx.fillText(`${Math.round(w)} × ${Math.round(h)}`, left + w / 2, top - 12);
 
-  ctx.restore();
+  overlayCtx.restore();
 }
 
-// Просто отрисовать сохранённый квадрат (когда рук нет)
-function drawSquare(left, top, w, h) {
-  ctx.save();
-  ctx.shadowColor = SQUARE_GLOW;
-  ctx.shadowBlur = 20;
-  ctx.strokeStyle = SQUARE_COLOR;
-  ctx.lineWidth = 5;
-  ctx.fillStyle = 'rgba(255,204,0,0.15)';
-  ctx.fillRect(left, top, w, h);
-  ctx.strokeRect(left, top, w, h);
-  ctx.restore();
-}
-
-// ================================================================
-// ГЛАВНЫЙ КОЛБЭК MediaPipe
-// ================================================================
+// ============================================================
+// ГЛАВНЫЙ ОБРАБОТЧИК
+// ============================================================
 function onResults(results) {
-  // Очищаем слой оверлея (пальцы/квадрат), но НЕ стираем рисунок.
-  // Для этого используем отдельный слой — но проще: держим рисунок в offscreen canvas.
-  // Здесь для простоты: рисунок "запекается" в canvas, а оверлей рисуется поверх
-  // и стирается только слой оверлея.
-  //
-  // Реализация: используем ДВА canvas — их два в DOM? Нет, у нас один.
-  // Поэтому делаем так: рисуем всё на одном canvas, но перед каждым кадром
-  // НЕ очищаем его — а оверлей с прошлого кадра стираем вручную нельзя.
-  //
-  // Решение: используем offscreen-канвас для рисунка, а на экран композитим.
-  // См. ниже — переопределим архитектуру.
-
-  // -------- Эта функция будет вызвана через renderComposite() --------
-  // (см. переопределение в конце скрипта)
-}
-
-// ================================================================
-// ПЕРЕОПРЕДЕЛЕНИЕ АРХИТЕКТУРЫ: 2 слоя
-// ================================================================
-// Рисунок храним в offscreen canvas "drawLayer".
-// На экранный canvas каждый кадр:
-//   1) копируем drawLayer
-//   2) рисуем оверлей (кружки / квадрат) поверх
-
-const drawLayer = document.createElement('canvas');
-const drawCtx = drawLayer.getContext('2d');
-
-function syncDrawLayerSize() {
-  const dpr = window.devicePixelRatio || 1;
-  drawLayer.width = canvasWidth * dpr;
-  drawLayer.height = canvasHeight * dpr;
-  drawCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  drawCtx.lineCap = 'round';
-  drawCtx.lineJoin = 'round';
-  drawCtx.lineWidth = LINE_WIDTH;
-  drawCtx.strokeStyle = LINE_COLOR;
-  drawCtx.shadowColor = GLOW_COLOR;
-  drawCtx.shadowBlur = 14;
-}
-
-// Стираем всё
-function clearAll() {
-  drawCtx.clearRect(0, 0, canvasWidth, canvasHeight);
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-  lastPoint = null;
-  square.active = false;
-}
-clearBtn.removeEventListener('click', clearCanvas);
-clearBtn.addEventListener('click', clearAll);
-
-// Рисуем линию в drawLayer
-function drawStrokeOnLayer(from, to) {
-  const distance = dist(from, to);
-  const maxStep = 6;
-  if (distance < maxStep) {
-    drawCtx.beginPath();
-    drawCtx.moveTo(from.x, from.y);
-    drawCtx.lineTo(to.x, to.y);
-    drawCtx.stroke();
-    return;
-  }
-  const steps = Math.ceil(distance / maxStep);
-  drawCtx.beginPath();
-  drawCtx.moveTo(from.x, from.y);
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    drawCtx.lineTo(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
-  }
-  drawCtx.stroke();
-}
-
-// Композит: drawLayer + оверлей
-function renderComposite(handsData) {
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-  // 1) рисунок
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(drawLayer, 0, 0);
-  ctx.restore();
-
-  // 2) оверлей в зависимости от режима
-  if (mode === 'track') {
-    for (const lm of handsData) drawTracking(lm);
-  } else if (mode === 'square') {
-    drawSquareFromHands(handsData);
-  }
-}
-
-// ================================================================
-// ОБРАБОТКА РЕЗУЛЬТАТОВ
-// ================================================================
-function handleResults(results) {
   const handsData = results.multiHandLandmarks || [];
 
-  // --- Режим отслеживания: ничего не рисуем в drawLayer, только оверлей ---
-  if (mode === 'track') {
-    renderComposite(handsData);
-    return;
+  if (mode === 'draw') {
+    handleDrawMode(handsData);
+    overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+  } else if (mode === 'track') {
+    drawTrackingOverlay(handsData);
+  } else if (mode === 'square') {
+    drawSquareOverlay(handsData);
   }
-
-  // --- Режим квадрата: оверлей + квадрат ---
-  if (mode === 'square') {
-    renderComposite(handsData);
-    return;
-  }
-
-  // --- Режим рисования ---
-  if (handsData.length > 0) {
-    const lm = handsData[0];
-    if (isIndexExtended(lm)) {
-      const raw = toScreen(lm[8]);
-
-      let point;
-      if (lastPoint) {
-        // Сглаживание с отставанием
-        point = {
-          x: lastPoint.x * SMOOTHING + raw.x * (1 - SMOOTHING),
-          y: lastPoint.y * SMOOTHING + raw.y * (1 - SMOOTHING)
-        };
-      } else {
-        point = raw;
-        // Ставим начальную точку
-        drawCtx.beginPath();
-        drawCtx.arc(point.x, point.y, LINE_WIDTH / 2, 0, Math.PI * 2);
-        drawCtx.fillStyle = LINE_COLOR;
-        drawCtx.fill();
-      }
-
-      if (!isDrawing) {
-        isDrawing = true;
-        lastPoint = point;
-        hideStatus();
-      } else {
-        if (lastPoint) drawStrokeOnLayer(lastPoint, point);
-        lastPoint = point;
-      }
-    } else {
-      isDrawing = false;
-      lastPoint = null;
-    }
-  } else {
-    isDrawing = false;
-    lastPoint = null;
-  }
-
-  renderComposite(handsData);
 }
 
-// ================================================================
+// ============================================================
 // MEDIAPIPE
-// ================================================================
+// ============================================================
 const hands = new Hands({
   locateFile: (file) =>
     `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
 });
 
 hands.setOptions({
-  maxNumHands: 2,                // 2 — чтобы работал режим квадрата двумя руками
-  modelComplexity: 1,
-  minDetectionConfidence: 0.7,
-  minTrackingConfidence: 0.7,
+  maxNumHands: 1,
+  modelComplexity: 0,          // 0 = быстрая модель (меньше лагов)
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.6,
   selfieMode: false,
 });
 
-hands.onResults(handleResults);
+hands.onResults(onResults);
 
-// ================================================================
+// ============================================================
 // КАМЕРА
-// ================================================================
+// ============================================================
 async function startCamera() {
   try {
     setStatus('⏳ Запрос доступа к камере...');
@@ -631,9 +538,9 @@ async function startCamera() {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: 'user',
-        width:  { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 60 }
+        width:  { ideal: 640 },     // меньше разрешение = меньше лагов
+        height: { ideal: 480 },
+        frameRate: { ideal: 30 }
       },
       audio: false
     });
@@ -643,19 +550,18 @@ async function startCamera() {
       video.onloadedmetadata = () => video.play().then(r).catch(r);
     });
 
-    resizeCanvas();
-    syncDrawLayerSize();
+    resizeCanvases();
 
-    setStatus('✋ <span class="highlight">Ведите указательным пальцем</span> — линия пойдёт следом');
+    setStatus('✋ <span class="highlight">Ведите указательным пальцем</span>');
 
     camera = new Camera(video, {
       onFrame: async () => { await hands.send({ image: video }); },
-      width: 1280,
-      height: 720,
+      width: 640,
+      height: 480,
     });
     await camera.start();
 
-    setTimeout(hideStatus, 5000);
+    setTimeout(hideStatus, 4000);
 
   } catch (err) {
     console.error(err);
@@ -673,24 +579,9 @@ window.addEventListener('load', () => {
     setStatus('❌ Ошибка загрузки MediaPipe. Проверьте интернет.', true);
     return;
   }
-  resizeCanvas();
-  syncDrawLayerSize();
+  resizeCanvases();
   updateModeIndicator();
   startCamera();
-});
-
-// Обновляем размер offscreen при ресайзе
-window.addEventListener('resize', () => {
-  // сохраняем текущий рисунок
-  const snapshot = document.createElement('canvas');
-  snapshot.width = drawLayer.width;
-  snapshot.height = drawLayer.height;
-  snapshot.getContext('2d').drawImage(drawLayer, 0, 0);
-
-  syncDrawLayerSize();
-
-  // восстанавливаем (грубо, без масштабирования под новый размер — для простоты)
-  drawCtx.drawImage(snapshot, 0, 0);
 });
 
 })();
