@@ -27,15 +27,6 @@
       position: relative;
       width: 100vw;
       height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .video-wrapper {
-      position: relative;
-      width: 100%;
-      height: 100%;
     }
 
     video {
@@ -74,23 +65,12 @@
       border: 1px solid rgba(255, 255, 255, 0.15);
       z-index: 100;
       text-align: center;
-      pointer-events: none;
       transition: opacity 0.3s;
       white-space: nowrap;
     }
 
-    #status.hidden {
-      opacity: 0;
-    }
-
-    #status .highlight {
-      color: #7cff7c;
-      font-weight: 700;
-    }
-
-    #status .warn {
-      color: #ffaa33;
-    }
+    #status.hidden { opacity: 0; }
+    #status .highlight { color: #7cff7c; font-weight: 700; }
 
     .controls {
       position: fixed;
@@ -100,9 +80,6 @@
       display: flex;
       gap: 12px;
       z-index: 100;
-      pointer-events: auto;
-      flex-wrap: wrap;
-      justify-content: center;
     }
 
     .controls button {
@@ -117,29 +94,21 @@
       backdrop-filter: blur(12px);
       transition: all 0.2s;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-      white-space: nowrap;
     }
 
     .controls button:hover {
       background: rgba(60, 60, 120, 0.9);
-      border-color: rgba(255, 255, 255, 0.4);
       transform: translateY(-2px);
-    }
-
-    .controls button:active {
-      transform: translateY(0px) scale(0.97);
     }
 
     .controls button.clear {
       background: rgba(220, 50, 50, 0.7);
-      border-color: rgba(255, 100, 100, 0.3);
     }
 
     .controls button.clear:hover {
       background: rgba(255, 60, 60, 0.9);
     }
 
-    /* Индикатор рисования */
     .draw-indicator {
       position: fixed;
       top: 20px;
@@ -158,28 +127,17 @@
       box-shadow: 0 0 20px #7cff7c;
     }
 
-    /* Адаптив */
     @media (max-width: 600px) {
-      #status {
-        font-size: 13px;
-        padding: 10px 18px;
-        white-space: normal;
-        max-width: 90vw;
-      }
-      .controls button {
-        padding: 10px 18px;
-        font-size: 13px;
-      }
+      #status { font-size: 13px; padding: 10px 18px; max-width: 90vw; white-space: normal; }
+      .controls button { padding: 10px 18px; font-size: 13px; }
     }
   </style>
 </head>
 <body>
 
 <div id="app">
-  <div class="video-wrapper">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
-  </div>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
 
   <div id="status">Запрос доступа к камере...</div>
   <div class="draw-indicator" id="drawIndicator"></div>
@@ -189,15 +147,13 @@
   </div>
 </div>
 
-<!-- MediaPipe Hands -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
 
 <script>
-(async function() {
+(function() {
   'use strict';
 
-  // === Элементы ===
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d');
@@ -207,31 +163,29 @@
 
   // === Состояние ===
   let isDrawing = false;
-  let lastPoint = null;       // {x, y} в координатах canvas (CSS пиксели)
-  let camera = null;
+  let lastPoint = null;        // последняя реальная точка пальца
   let canvasWidth = 0;
   let canvasHeight = 0;
+  let camera = null;
 
-  // Сглаживание
-  const SMOOTHING = 0.5;      // 0..1, чем больше — тем плавнее, но с задержкой
-  let smoothedPoint = null;
-
-  // Порог "поднятого указательного пальца" — расстояние между кончиком (8)
-  // и основанием (5) указательного пальца в долях от размера ладони
-  const FINGER_EXTENDED_RATIO = 0.7;
-
-  // Толщина линии
-  const LINE_WIDTH = 6;
+  // === Параметры рисования ===
+  const LINE_WIDTH = 8;
   const LINE_COLOR = '#00e5ff';
-  const GLOW_COLOR = 'rgba(0, 229, 255, 0.35)';
+  const GLOW_COLOR = 'rgba(0, 229, 255, 0.4)';
+
+  // Насколько сильно "тянется" линия за пальцем.
+  // 0 = линия строго под пальцем (без сглаживания)
+  // Чем больше — тем плавнее, но с отставанием.
+  const SMOOTHING = 0.35;      // легкое сглаживание для красоты, но почти без отставания
+
+  // Порог распознавания выпрямленного указательного пальца
+  const FINGER_EXTENDED_RATIO = 0.7;
 
   // === Инициализация canvas ===
   function resizeCanvas() {
-    const rect = canvas.parentElement.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-
-    canvasWidth = rect.width;
-    canvasHeight = rect.height;
+    canvasWidth = window.innerWidth;
+    canvasHeight = window.innerHeight;
 
     canvas.width = canvasWidth * dpr;
     canvas.height = canvasHeight * dpr;
@@ -239,14 +193,7 @@
     canvas.style.height = canvasHeight + 'px';
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    // Перерисовываем фон (прозрачный) — canvas прозрачен, видео под ним
-    // Но нужно восстановить настройки рисования
     setupDrawingStyle();
-
-    // После ресайза холст очищается — это нормально,
-    // но если нужно сохранить рисунок — можно было бы сохранить в offscreen.
-    // Для простоты оставляем очистку.
   }
 
   function setupDrawingStyle() {
@@ -255,47 +202,32 @@
     ctx.lineWidth = LINE_WIDTH;
     ctx.strokeStyle = LINE_COLOR;
     ctx.shadowColor = GLOW_COLOR;
-    ctx.shadowBlur = 12;
+    ctx.shadowBlur = 14;
   }
 
-  window.addEventListener('resize', () => {
-    resizeCanvas();
-  });
+  window.addEventListener('resize', resizeCanvas);
 
-  // === Очистка холста ===
+  // === Очистка ===
   function clearCanvas() {
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
     lastPoint = null;
-    smoothedPoint = null;
   }
 
   clearBtn.addEventListener('click', clearCanvas);
 
   // === Статус ===
-  function setStatus(text, isWarning = false) {
-    statusEl.innerHTML = text;
+  function setStatus(html, warn = false) {
+    statusEl.innerHTML = html;
     statusEl.classList.remove('hidden');
-    if (isWarning) {
-      statusEl.classList.add('warn');
-    } else {
-      statusEl.classList.remove('warn');
-    }
+    statusEl.classList.toggle('warn', warn);
   }
+  function hideStatus() { statusEl.classList.add('hidden'); }
 
-  function hideStatus() {
-    statusEl.classList.add('hidden');
-  }
-
-  // === Индикатор рисования ===
   function setDrawIndicator(active) {
-    if (active) {
-      drawIndicator.classList.add('active');
-    } else {
-      drawIndicator.classList.remove('active');
-    }
+    drawIndicator.classList.toggle('active', active);
   }
 
-  // === Утилита: расстояние между точками ===
+  // === Расстояние между точками ===
   function dist(a, b) {
     const dx = a.x - b.x;
     const dy = a.y - b.y;
@@ -303,103 +235,112 @@
   }
 
   // === Проверка: поднят ли указательный палец ===
-  // Возвращает true, если палец выпрямлен (кончик дальше от запястья, чем основание)
-  function isIndexFingerExtended(landmarks) {
-    const wrist = landmarks[0];
-    const indexMcp = landmarks[5];   // основание указательного
-    const indexTip = landmarks[8];   // кончик указательного
-
-    // Расстояние от запястья до кончика и до основания
+  function isIndexFingerExtended(lm) {
+    const wrist = lm[0];
+    const indexMcp = lm[5];
+    const indexTip = lm[8];
     const dTip = dist(wrist, indexTip);
     const dMcp = dist(wrist, indexMcp);
-
-    // Палец считается выпрямленным, если кончик значительно дальше основания
-    return dTip > dMcp * (1 + FINGER_EXTENDED_RATIO * 0.5) && dTip > dMcp * 1.15;
+    return dTip > dMcp * 1.15;
   }
 
-  // === Основной колбэк MediaPipe ===
+  // === Рисование отрезка с интерполяцией ===
+  // Если палец прыгнул далеко — рисуем несколько мелких отрезков, чтобы линия была сплошной
+  function drawStroke(from, to) {
+    const distance = dist(from, to);
+    const maxStep = 6; // пикселей между промежуточными точками
+
+    if (distance < maxStep) {
+      // Маленькое движение — одна линия
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+      return;
+    }
+
+    // Большое движение — интерполируем
+    const steps = Math.ceil(distance / maxStep);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const x = from.x + (to.x - from.x) * t;
+      const y = from.y + (to.y - from.y) * t;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // === Колбэк MediaPipe ===
   function onResults(results) {
-    // Результаты приходят с координатами в нормализованном виде [0..1]
-    // относительно видео (которое зеркально отражено через CSS scaleX(-1))
-
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      const landmarks = results.multiHandLandmarks[0];
+      const lm = results.multiHandLandmarks[0];
+      const indexTip = lm[8];
 
-      // Кончик указательного пальца
-      const indexTip = landmarks[8];
+      if (isIndexFingerExtended(lm)) {
+        // Переводим нормализованные координаты (0..1) в пиксели canvas.
+        // Из-за scaleX(-1) на видео и canvas — инвертируем X.
+        const rawX = (1 - indexTip.x) * canvasWidth;
+        const rawY = indexTip.y * canvasHeight;
 
-      // Проверяем, поднят ли указательный палец
-      const extended = isIndexFingerExtended(landmarks);
-
-      if (extended) {
-        // Переводим нормализованные координаты в пиксели canvas
-        // ВАЖНО: видео зеркально отражено через CSS, поэтому x нужно инвертировать
-        // Нормализованный x: 0 (лево в видео) → 1 (право в видео)
-        // После зеркала: 0 → 1 (право на экране), 1 → 0 (лево на экране)
-        // Поэтому экранный x = (1 - normX) * canvasWidth
-        const screenX = (1 - indexTip.x) * canvasWidth;
-        const screenY = indexTip.y * canvasHeight;
-
-        const currentPoint = { x: screenX, y: screenY };
-
-        // Сглаживание
-        if (smoothedPoint === null) {
-          smoothedPoint = { ...currentPoint };
-        } else {
-          smoothedPoint.x = smoothedPoint.x * (1 - SMOOTHING) + currentPoint.x * SMOOTHING;
-          smoothedPoint.y = smoothedPoint.y * (1 - SMOOTHING) + currentPoint.y * SMOOTHING;
+        // Сглаживание (мягкое — чтобы убрать дрожание руки, но без сильного отставания)
+        let x = rawX, y = rawY;
+        if (lastPoint) {
+          x = lastPoint.x * SMOOTHING + rawX * (1 - SMOOTHING);
+          y = lastPoint.y * SMOOTHING + rawY * (1 - SMOOTHING);
         }
-
-        const drawPoint = { x: smoothedPoint.x, y: smoothedPoint.y };
+        const currentPoint = { x, y };
 
         if (!isDrawing) {
-          // Начало рисования — запоминаем точку
+          // Начинаем новую линию — просто ставим точку
           isDrawing = true;
-          lastPoint = drawPoint;
+          lastPoint = currentPoint;
           setDrawIndicator(true);
           hideStatus();
+
+          // Небольшая точка, чтобы было видно начало
+          ctx.beginPath();
+          ctx.arc(currentPoint.x, currentPoint.y, LINE_WIDTH / 2, 0, Math.PI * 2);
+          ctx.fillStyle = LINE_COLOR;
+          ctx.fill();
         } else {
-          // Продолжение рисования — рисуем линию от прошлой точки
+          // Продолжаем рисовать — тянем линию от предыдущей точки к текущей
           if (lastPoint) {
-            ctx.beginPath();
-            ctx.moveTo(lastPoint.x, lastPoint.y);
-            ctx.lineTo(drawPoint.x, drawPoint.y);
-            ctx.stroke();
+            drawStroke(lastPoint, currentPoint);
           }
-          lastPoint = drawPoint;
+          lastPoint = currentPoint;
         }
       } else {
-        // Указательный палец не поднят — прекращаем рисование
+        // Палец не поднят — прекращаем
         if (isDrawing) {
           isDrawing = false;
           lastPoint = null;
-          smoothedPoint = null;
           setDrawIndicator(false);
         }
       }
     } else {
-      // Рука не обнаружена
+      // Рука пропала из кадра
       if (isDrawing) {
         isDrawing = false;
         lastPoint = null;
-        smoothedPoint = null;
         setDrawIndicator(false);
       }
     }
   }
 
-  // === Инициализация MediaPipe Hands ===
+  // === MediaPipe ===
   const hands = new Hands({
-    locateFile: (file) => {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`;
-    }
+    locateFile: (file) =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
   });
 
   hands.setOptions({
     maxNumHands: 1,
-    modelComplexity: 0,          // 0 — быстрее, 1 — точнее
-    minDetectionConfidence: 0.6,
-    minTrackingConfidence: 0.6,
+    modelComplexity: 1,              // 1 — точнее отслеживание (важно для "прилипания" к пальцу)
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7,
+    selfieMode: false,
   });
 
   hands.onResults(onResults);
@@ -409,93 +350,58 @@
     try {
       setStatus('⏳ Запрос доступа к камере...');
 
-      // Проверяем поддержку
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Ваш браузер не поддерживает доступ к камере');
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Браузер не поддерживает доступ к камере');
       }
 
-      // Запрашиваем камеру
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',
-          width: { ideal: 1280 },
+          width:  { ideal: 1280 },
           height: { ideal: 720 },
+          frameRate: { ideal: 60 }   // просим больше FPS — меньше задержка
         },
-        audio: false,
+        audio: false
       });
 
-      // Привязываем поток к видео
       video.srcObject = stream;
-
-      // Ждём загрузки метаданных
-      await new Promise((resolve) => {
-        video.onloadedmetadata = () => {
-          video.play().then(resolve).catch(resolve);
-        };
+      await new Promise(r => {
+        video.onloadedmetadata = () => video.play().then(r).catch(r);
       });
 
-      // Даём кадру отрисоваться
-      await new Promise(r => setTimeout(r, 300));
-
-      // Настраиваем canvas под размеры видео
       resizeCanvas();
-      setupDrawingStyle();
 
-      setStatus('✋ <span class="highlight">Поднимите указательный палец</span> и рисуйте в воздухе!');
+      setStatus('✋ <span class="highlight">Поднимите указательный палец</span> и ведите им — линия пойдёт следом!');
 
-      // Запускаем обработку через Camera Utils
       camera = new Camera(video, {
-        onFrame: async () => {
-          await hands.send({ image: video });
-        },
+        onFrame: async () => { await hands.send({ image: video }); },
         width: 1280,
         height: 720,
       });
-
       await camera.start();
 
-      // Скрываем статус через 4 секунды
-      setTimeout(() => {
-        hideStatus();
-      }, 4000);
+      setTimeout(hideStatus, 5000);
 
     } catch (err) {
-      console.error('Ошибка камеры:', err);
-
-      let message = '❌ Не удалось получить доступ к камере.';
-
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        message = '🚫 Доступ к камере запрещён. Разрешите доступ в настройках браузера и обновите страницу.';
-      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-        message = '📷 Камера не найдена. Подключите камеру и обновите страницу.';
-      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-        message = '⚠️ Камера уже используется другим приложением. Закройте его и обновите страницу.';
-      } else if (err.message) {
-        message = '❌ ' + err.message;
-      }
-
-      setStatus(message, true);
+      console.error(err);
+      let msg = '❌ Не удалось получить доступ к камере.';
+      if (err.name === 'NotAllowedError') msg = '🚫 Доступ запрещён. Разрешите камеру и обновите страницу.';
+      else if (err.name === 'NotFoundError') msg = '📷 Камера не найдена.';
+      else if (err.name === 'NotReadableError') msg = '⚠️ Камера занята другим приложением.';
+      else if (err.message) msg = '❌ ' + err.message;
+      setStatus(msg, true);
     }
   }
 
-  // === Старт ===
-  // Небольшая задержка, чтобы DOM точно загрузился
   window.addEventListener('load', () => {
-    // Проверяем, что MediaPipe загрузился
     if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
-      setStatus('❌ Ошибка загрузки библиотеки MediaPipe. Проверьте интернет-соединение и обновите страницу.', true);
+      setStatus('❌ Ошибка загрузки MediaPipe. Проверьте интернет.', true);
       return;
     }
-
-    startCamera();
-  });
-
-  // Начальная настройка canvas (на случай, если load уже прошёл)
-  if (document.readyState === 'complete') {
     resizeCanvas();
     setupDrawingStyle();
-  }
-
+    startCamera();
+  });
 })();
 </script>
 
