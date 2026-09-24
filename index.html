@@ -4,440 +4,773 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hand Draw</title>
+
+<title>Управление руками</title>
 
 <style>
-    * {
-        box-sizing: border-box;
-    }
 
-    body {
-        margin: 0;
-        background: #111;
-        color: white;
-        font-family: Arial, sans-serif;
-        overflow: hidden;
-    }
+* {
+    box-sizing: border-box;
+}
 
-    #app {
-        position: relative;
-        width: 100vw;
-        height: 100vh;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-    }
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #111;
+    font-family: Arial, sans-serif;
+}
 
-    video {
-        position: absolute;
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        transform: scaleX(-1);
-    }
+#video {
+    position: fixed;
+    inset: 0;
 
-    canvas {
-        position: absolute;
-        width: 100%;
-        height: 100%;
-    }
+    width: 100%;
+    height: 100%;
 
-    #drawCanvas {
-        pointer-events: none;
-    }
+    object-fit: cover;
 
-    #info {
-        position: absolute;
-        top: 20px;
-        left: 20px;
-        z-index: 10;
-        background: rgba(0,0,0,.65);
-        padding: 15px 20px;
-        border-radius: 15px;
-        font-size: 15px;
-        line-height: 1.5;
-    }
+    /* Зеркальное изображение камеры */
+    transform: scaleX(-1);
+}
 
-    button {
-        position: absolute;
-        right: 20px;
-        top: 20px;
-        z-index: 10;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 18px;
-        background: #2196f3;
-        color: white;
-        font-size: 15px;
-        cursor: pointer;
-    }
+canvas {
+    position: fixed;
+    inset: 0;
 
-    button:hover {
-        background: #1976d2;
-    }
+    width: 100%;
+    height: 100%;
+
+    pointer-events: none;
+}
+
+#ui {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+
+    transform: translateX(-50%);
+
+    display: flex;
+    gap: 10px;
+
+    z-index: 20;
+}
+
+button {
+    border: 0;
+
+    padding: 13px 22px;
+
+    border-radius: 12px;
+
+    background: rgba(30,30,30,.9);
+
+    color: white;
+
+    font-size: 16px;
+
+    cursor: pointer;
+}
+
+button.active {
+    background: #2196f3;
+}
+
+#clear {
+    background: #e53935;
+}
+
+#status {
+    position: fixed;
+
+    bottom: 20px;
+    left: 50%;
+
+    transform: translateX(-50%);
+
+    z-index: 20;
+
+    padding: 10px 18px;
+
+    border-radius: 12px;
+
+    background: rgba(0,0,0,.7);
+
+    color: white;
+}
+
 </style>
 </head>
 
 <body>
 
-<div id="app">
+<video id="video" autoplay playsinline></video>
 
-    <video id="video" autoplay playsinline></video>
+<canvas id="drawCanvas"></canvas>
+<canvas id="handCanvas"></canvas>
 
-    <canvas id="drawCanvas"></canvas>
-    <canvas id="handCanvas"></canvas>
+<div id="ui">
 
-    <div id="info">
-        🖐️ Покажи руку камере<br>
-        ☝️ Указательный палец — рисовать<br>
-        ✌️ Два пальца — управление квадратом<br>
-        🤏 Потяни за угол квадрата
-    </div>
+    <button id="drawMode" class="active">
+        ✏️ Рисование
+    </button>
 
-    <button onclick="clearDrawing()">Очистить</button>
+    <button id="squareMode">
+        ⬛ Квадрат
+    </button>
+
+    <button id="clear">
+        🗑 Очистить
+    </button>
 
 </div>
 
-<!-- MediaPipe -->
+<div id="status">
+    Режим: Рисование
+</div>
+
+
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
 
 <script>
 
 const video = document.getElementById("video");
-const drawCanvas = document.getElementById("drawCanvas");
-const handCanvas = document.getElementById("handCanvas");
 
-const drawCtx = drawCanvas.getContext("2d");
-const handCtx = handCanvas.getContext("2d");
+const drawCanvas =
+    document.getElementById("drawCanvas");
 
-let W = window.innerWidth;
-let H = window.innerHeight;
+const handCanvas =
+    document.getElementById("handCanvas");
+
+const drawCtx =
+    drawCanvas.getContext("2d");
+
+const handCtx =
+    handCanvas.getContext("2d");
+
+const drawButton =
+    document.getElementById("drawMode");
+
+const squareButton =
+    document.getElementById("squareMode");
+
+const clearButton =
+    document.getElementById("clear");
+
+const status =
+    document.getElementById("status");
+
+
+// ==================================================
+// РАЗМЕР
+// ==================================================
 
 function resize() {
-    W = window.innerWidth;
-    H = window.innerHeight;
 
-    drawCanvas.width = W;
-    drawCanvas.height = H;
+    drawCanvas.width = window.innerWidth;
+    drawCanvas.height = window.innerHeight;
 
-    handCanvas.width = W;
-    handCanvas.height = H;
+    handCanvas.width = window.innerWidth;
+    handCanvas.height = window.innerHeight;
 }
 
-window.addEventListener("resize", resize);
 resize();
 
-
-// -----------------------------
-// КВАДРАТ
-// -----------------------------
-
-let square = {
-    x: W / 2 - 100,
-    y: H / 2 - 100,
-    size: 200
-};
-
-let draggingCorner = false;
+window.addEventListener("resize", resize);
 
 
-// Проверяем расстояние между точками
-function distance(a, b) {
-    return Math.sqrt(
-        Math.pow(a.x - b.x, 2) +
-        Math.pow(a.y - b.y, 2)
-    );
-}
+// ==================================================
+// РЕЖИМ
+// ==================================================
+
+let mode = "draw";
 
 
-// -----------------------------
-// РИСОВАНИЕ
-// -----------------------------
+function setMode(newMode) {
 
-let drawing = false;
-let lastPoint = null;
+    mode = newMode;
 
-function draw(x, y) {
+    drawButton.classList.remove("active");
+    squareButton.classList.remove("active");
 
-    if (!lastPoint) {
-        lastPoint = {x, y};
-        return;
+    if (mode === "draw") {
+
+        drawButton.classList.add("active");
+
+        status.textContent =
+            "Режим: Рисование";
+
     }
 
-    drawCtx.beginPath();
+    if (mode === "square") {
 
-    drawCtx.moveTo(lastPoint.x, lastPoint.y);
-    drawCtx.lineTo(x, y);
+        squareButton.classList.add("active");
 
-    drawCtx.strokeStyle = "#00ffcc";
-    drawCtx.lineWidth = 6;
-    drawCtx.lineCap = "round";
+        status.textContent =
+            "Режим: Квадрат — растягивай двумя руками";
 
-    drawCtx.stroke();
-
-    lastPoint = {x, y};
+        lastPoint = null;
+    }
 }
 
 
-function clearDrawing() {
+drawButton.onclick = () => {
+    setMode("draw");
+};
+
+squareButton.onclick = () => {
+    setMode("square");
+};
+
+clearButton.onclick = () => {
+
     drawCtx.clearRect(
         0,
         0,
         drawCanvas.width,
         drawCanvas.height
     );
+};
+
+
+// ==================================================
+// РИСОВАНИЕ
+// ==================================================
+
+let lastPoint = null;
+
+
+function draw(x, y) {
+
+    if (!lastPoint) {
+
+        lastPoint = {
+            x: x,
+            y: y
+        };
+
+        return;
+    }
+
+    drawCtx.beginPath();
+
+    drawCtx.moveTo(
+        lastPoint.x,
+        lastPoint.y
+    );
+
+    drawCtx.lineTo(
+        x,
+        y
+    );
+
+    drawCtx.strokeStyle = "#00ffcc";
+
+    drawCtx.lineWidth = 7;
+
+    drawCtx.lineCap = "round";
+
+    drawCtx.lineJoin = "round";
+
+    drawCtx.stroke();
+
+    lastPoint = {
+        x: x,
+        y: y
+    };
 }
 
 
-// -----------------------------
+// ==================================================
+// КВАДРАТ
+// ==================================================
+
+let square = {
+
+    x: window.innerWidth / 2 - 100,
+
+    y: window.innerHeight / 2 - 100,
+
+    width: 200,
+
+    height: 200
+
+};
+
+
+// ==================================================
+// ТОЧКА ИЗ MEDIAPIPE В ЭКРАН
+// ==================================================
+
+function pointToScreen(point) {
+
+    return {
+
+        /*
+         * ВАЖНО:
+         *
+         * Видео зеркальное.
+         * Поэтому X тоже зеркалим.
+         */
+
+        x: (1 - point.x) *
+           window.innerWidth,
+
+        y: point.y *
+           window.innerHeight
+    };
+}
+
+
+// ==================================================
+// РАССТОЯНИЕ
+// ==================================================
+
+function distance(a, b) {
+
+    return Math.sqrt(
+
+        Math.pow(a.x - b.x, 2) +
+
+        Math.pow(a.y - b.y, 2)
+    );
+}
+
+
+// ==================================================
 // MEDIAPIPE
-// -----------------------------
+// ==================================================
 
 const hands = new Hands({
-    locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+
+    locateFile: file => {
+
+        return (
+            "https://cdn.jsdelivr.net/npm/" +
+            "@mediapipe/hands/" +
+            file
+        );
     }
+
 });
+
 
 hands.setOptions({
+
     maxNumHands: 2,
+
     modelComplexity: 1,
-    minDetectionConfidence: 0.6,
-    minTrackingConfidence: 0.6
+
+    minDetectionConfidence: 0.65,
+
+    minTrackingConfidence: 0.65
+
 });
 
+
+// ==================================================
+// РЕЗУЛЬТАТ
+// ==================================================
 
 hands.onResults(results => {
 
     handCtx.clearRect(
+
         0,
         0,
+
         handCanvas.width,
         handCanvas.height
     );
 
-    // Рисуем квадрат
-    handCtx.strokeStyle = "#ffffff";
-    handCtx.lineWidth = 4;
 
-    handCtx.strokeRect(
-        square.x,
-        square.y,
-        square.size,
-        square.size
-    );
+    // ==============================================
+    // РИСУЕМ РУКИ
+    // ==============================================
 
-    // Угол квадрата
-    handCtx.fillStyle = "#ff4444";
+    if (results.multiHandLandmarks) {
 
-    handCtx.beginPath();
-    handCtx.arc(
-        square.x + square.size,
-        square.y + square.size,
-        12,
-        0,
-        Math.PI * 2
-    );
-    handCtx.fill();
+        for (
+            const landmarks
+            of results.multiHandLandmarks
+        ) {
+
+            /*
+             * Раньше модель была смещена,
+             * потому что координаты руки
+             * и видео зеркалились по-разному.
+             *
+             * Теперь используем те же
+             * зеркальные координаты.
+             */
+
+            const mirrored =
+                landmarks.map(point => {
+
+                    return {
+
+                        x: 1 - point.x,
+
+                        y: point.y,
+
+                        z: point.z
+
+                    };
+
+                });
 
 
-    if (!results.multiHandLandmarks) {
+            drawConnectors(
+
+                handCtx,
+
+                mirrored,
+
+                HAND_CONNECTIONS,
+
+                {
+
+                    color: "#00ff88",
+
+                    lineWidth: 3
+
+                }
+
+            );
+
+
+            drawLandmarks(
+
+                handCtx,
+
+                mirrored,
+
+                {
+
+                    color: "#ffffff",
+
+                    lineWidth: 1,
+
+                    radius: 5
+
+                }
+
+            );
+
+        }
+
+    }
+
+
+    // ==============================================
+    // КВАДРАТ
+    // ==============================================
+
+    if (mode === "square") {
+
+        drawSquare();
+    }
+
+
+    // ==============================================
+    // НЕТ РУК
+    // ==============================================
+
+    if (
+        !results.multiHandLandmarks ||
+        results.multiHandLandmarks.length === 0
+    ) {
+
         lastPoint = null;
+
         return;
     }
 
 
-    // -----------------------------
-    // ОБРАБОТКА РУК
-    // -----------------------------
+    // ==============================================
+    // РЕЖИМ РИСОВАНИЯ
+    // ==============================================
 
-    for (const landmarks of results.multiHandLandmarks) {
+    if (mode === "draw") {
 
-        drawConnectors(
-            handCtx,
-            landmarks,
-            HAND_CONNECTIONS,
-            {
-                color: "#00ff88",
-                lineWidth: 2
-            }
-        );
-
-        drawLandmarks(
-            handCtx,
-            landmarks,
-            {
-                color: "#ffffff",
-                lineWidth: 1,
-                radius: 4
-            }
-        );
+        const hand =
+            results.multiHandLandmarks[0];
 
 
-        // Указательный палец
-        const index = landmarks[8];
+        const index =
+            pointToScreen(hand[8]);
 
-        // Средний палец
-        const middle = landmarks[12];
-
-
-        const ix = (1 - index.x) * W;
-        const iy = index.y * H;
-
-        const mx = (1 - middle.x) * W;
-        const my = middle.y * H;
+        const pip =
+            pointToScreen(hand[6]);
 
 
-        // -----------------------------
-        // РАСТЯГИВАНИЕ КВАДРАТА
-        // -----------------------------
-
-        const corner = {
-            x: square.x + square.size,
-            y: square.y + square.size
-        };
-
-        const d = distance(
-            {x: ix, y: iy},
-            corner
-        );
-
-
-        // Если указательный палец около угла
-        if (d < 50) {
-            draggingCorner = true;
-        }
-
-
-        if (draggingCorner) {
-
-            let newSize = Math.max(
-                50,
-                ix - square.x
-            );
-
-            square.size = newSize;
-
-
-            // Если палец ушёл далеко
-            if (d > 150) {
-                draggingCorner = false;
-            }
-
-        }
-
-
-        // -----------------------------
-        // РИСОВАНИЕ
-        // -----------------------------
-
-        // Расстояние между указательным
-        // и средним пальцем
-
-        const fingersDistance = distance(
-            {x: ix, y: iy},
-            {x: mx, y: my}
-        );
-
-
-        // Если указательный палец вытянут,
-        // а средний согнут — рисуем
-
-        const indexTip = landmarks[8];
-        const indexPip = landmarks[6];
+        /*
+         * Проверяем, вытянут ли
+         * указательный палец.
+         */
 
         const indexExtended =
-            indexTip.y < indexPip.y;
+            index.y < pip.y;
+
+
+        /*
+         * Большой палец и указательный
+         * должны быть достаточно далеко.
+         */
+
+        const thumb =
+            pointToScreen(hand[4]);
+
+
+        const fingerDistance =
+            distance(index, thumb);
 
 
         if (
             indexExtended &&
-            fingersDistance > 45 &&
-            !draggingCorner
+            fingerDistance > 35
         ) {
 
-            drawing = true;
-
-            draw(ix, iy);
+            draw(
+                index.x,
+                index.y
+            );
 
         } else {
 
-            drawing = false;
             lastPoint = null;
-
         }
 
+        return;
     }
 
 
-    // -----------------------------
-    // ДВЕ РУКИ
-    // -----------------------------
+    // ==============================================
+    // РЕЖИМ КВАДРАТА
+    // ==============================================
 
-    if (results.multiHandLandmarks.length >= 2) {
+    if (mode === "square") {
 
-        const hand1 = results.multiHandLandmarks[0];
-        const hand2 = results.multiHandLandmarks[1];
-
-        const p1 = {
-            x: (1 - hand1[8].x) * W,
-            y: hand1[8].y * H
-        };
-
-        const p2 = {
-            x: (1 - hand2[8].x) * W,
-            y: hand2[8].y * H
-        };
-
-
-        const d = distance(p1, p2);
-
-        // Если два указательных пальца
-        // находятся около разных областей,
-        // можно изменять размер квадрата
-
-        if (d > 80 && d < 800) {
-
-            const centerX = (p1.x + p2.x) / 2;
-            const centerY = (p1.y + p2.y) / 2;
-
-            const newSize = Math.max(
-                50,
-                d
-            );
-
-            square.size = newSize;
-
-            square.x =
-                centerX - newSize / 2;
-
-            square.y =
-                centerY - newSize / 2;
-        }
+        handleSquare(results);
     }
 
 });
 
 
-// -----------------------------
-// ЗАПУСК КАМЕРЫ
-// -----------------------------
+// ==================================================
+// КВАДРАТ НА ЭКРАНЕ
+// ==================================================
 
-const camera = new Camera(video, {
+function drawSquare() {
 
-    onFrame: async () => {
-        await hands.send({
-            image: video
-        });
-    },
+    handCtx.save();
 
-    width: 1280,
-    height: 720
+    handCtx.strokeStyle = "#ffffff";
 
-});
+    handCtx.lineWidth = 5;
+
+    handCtx.strokeRect(
+
+        square.x,
+
+        square.y,
+
+        square.width,
+
+        square.height
+    );
+
+
+    /*
+     * Показываем точки,
+     * за которые нужно брать квадрат.
+     */
+
+    handCtx.fillStyle = "#ff3b30";
+
+
+    // левый верхний
+
+    drawHandle(
+        square.x,
+        square.y
+    );
+
+
+    // правый нижний
+
+    drawHandle(
+
+        square.x + square.width,
+
+        square.y + square.height
+    );
+
+
+    handCtx.restore();
+}
+
+
+function drawHandle(x, y) {
+
+    handCtx.beginPath();
+
+    handCtx.arc(
+
+        x,
+        y,
+
+        14,
+
+        0,
+
+        Math.PI * 2
+    );
+
+    handCtx.fill();
+}
+
+
+// ==================================================
+// УПРАВЛЕНИЕ КВАДРАТОМ
+// ==================================================
+
+let grabbing = false;
+
+
+function handleSquare(results) {
+
+    if (
+        results.multiHandLandmarks.length < 2
+    ) {
+
+        grabbing = false;
+
+        return;
+    }
+
+
+    const hand1 =
+        results.multiHandLandmarks[0];
+
+    const hand2 =
+        results.multiHandLandmarks[1];
+
+
+    /*
+     * Берём указательные пальцы
+     * двух рук.
+     */
+
+    const p1 =
+        pointToScreen(hand1[8]);
+
+    const p2 =
+        pointToScreen(hand2[8]);
+
+
+    // ==============================================
+    // ДВЕ ТОЧКИ
+    // ==============================================
+
+    /*
+     * Получаем прямоугольник
+     * между пальцами.
+     */
+
+    const left =
+        Math.min(p1.x, p2.x);
+
+    const right =
+        Math.max(p1.x, p2.x);
+
+    const top =
+        Math.min(p1.y, p2.y);
+
+    const bottom =
+        Math.max(p1.y, p2.y);
+
+
+    const width =
+        right - left;
+
+    const height =
+        bottom - top;
+
+
+    /*
+     * Делаем именно квадрат.
+     */
+
+    const size =
+        Math.max(
+            60,
+            Math.max(width, height)
+        );
+
+
+    /*
+     * Центр между двумя руками.
+     */
+
+    const centerX =
+        (p1.x + p2.x) / 2;
+
+    const centerY =
+        (p1.y + p2.y) / 2;
+
+
+    square.width = size;
+
+    square.height = size;
+
+    square.x =
+        centerX - size / 2;
+
+    square.y =
+        centerY - size / 2;
+
+
+    grabbing = true;
+}
+
+
+// ==================================================
+// КАМЕРА
+// ==================================================
+
+const camera =
+    new Camera(
+
+        video,
+
+        {
+
+            onFrame: async () => {
+
+                await hands.send({
+
+                    image: video
+
+                });
+
+            },
+
+            width: 1280,
+
+            height: 720
+
+        }
+
+    );
+
 
 camera.start();
 
