@@ -1,1839 +1,404 @@
-```html
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Комната — 3D кубы</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+            background: #000;
+            color: white;
+        }
+        #ar-button {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 18px 40px;
+            font-size: 20px;
+            font-weight: bold;
+            background: linear-gradient(135deg, #4CAF50, #2E7D32);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 8px 24px rgba(76, 175, 80, 0.5);
+            z-index: 999;
+            transition: all 0.3s;
+        }
+        #ar-button:hover {
+            transform: translateX(-50%) translateY(-3px);
+            box-shadow: 0 12px 32px rgba(76, 175, 80, 0.7);
+        }
+        #ar-button:active { transform: translateX(-50%) scale(0.95); }
 
-<title>Hand Hologram</title>
+        #info {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-size: 14px;
+            z-index: 999;
+            text-align: center;
+            max-width: 90%;
+        }
 
-<style>
+        #controls {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            gap: 10px;
+            z-index: 999;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
 
-* {
-    box-sizing: border-box;
-}
+        #controls button {
+            padding: 12px 20px;
+            font-size: 14px;
+            border: none;
+            border-radius: 25px;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
 
-html,
-body {
-    margin: 0;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background: #050505;
-    font-family: Arial, sans-serif;
-}
+        #controls button.active {
+            background: rgba(76, 175, 80, 0.9);
+            border-color: #4CAF50;
+        }
 
-#video {
-    position: fixed;
-    inset: 0;
+        #not-supported {
+            position: fixed;
+            inset: 0;
+            background: #1a1a2e;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 30px;
+            text-align: center;
+            z-index: 1000;
+        }
+        #not-supported h2 { margin-bottom: 20px; color: #f44336; }
+        #not-supported p { margin-bottom: 10px; line-height: 1.6; max-width: 500px; }
 
-    width: 100%;
-    height: 100%;
+        #reticle {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 40px;
+            height: 40px;
+            margin: -20px 0 0 -20px;
+            border: 3px solid white;
+            border-radius: 50%;
+            pointer-events: none;
+            display: none;
+            z-index: 998;
+            opacity: 0.7;
+        }
 
-    object-fit: cover;
+        #reticle::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 6px;
+            height: 6px;
+            margin: -3px 0 0 -3px;
+            background: white;
+            border-radius: 50%;
+        }
 
-    transform: scaleX(-1);
-
-    background: black;
-}
-
-#canvas {
-    position: fixed;
-    inset: 0;
-
-    width: 100%;
-    height: 100%;
-
-    pointer-events: none;
-}
-
-#menu {
-    position: fixed;
-
-    top: 18px;
-    left: 50%;
-
-    transform: translateX(-50%);
-
-    display: flex;
-    gap: 8px;
-
-    padding: 8px;
-
-    background: rgba(0,0,0,.55);
-
-    backdrop-filter: blur(12px);
-
-    border-radius: 15px;
-
-    z-index: 20;
-}
-
-button {
-    border: none;
-
-    padding: 11px 18px;
-
-    border-radius: 10px;
-
-    background: rgba(255,255,255,.12);
-
-    color: white;
-
-    font-size: 15px;
-
-    cursor: pointer;
-}
-
-button:hover {
-    background: rgba(255,255,255,.22);
-}
-
-button.active {
-    background: #2196f3;
-}
-
-#status {
-    position: fixed;
-
-    bottom: 20px;
-    left: 50%;
-
-    transform: translateX(-50%);
-
-    padding: 10px 18px;
-
-    border-radius: 12px;
-
-    background: rgba(0,0,0,.7);
-
-    color: white;
-
-    z-index: 20;
-
-    font-size: 14px;
-}
-
-#fps {
-    position: fixed;
-
-    top: 15px;
-    right: 15px;
-
-    color: #00ffcc;
-
-    font-family: monospace;
-
-    z-index: 20;
-}
-
-</style>
+        .color-dot {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+    </style>
 </head>
-
 <body>
 
-<video
-    id="video"
-    autoplay
-    muted
-    playsinline>
-</video>
-
-<canvas id="canvas"></canvas>
-
-<div id="menu">
-
-    <button id="drawButton" class="active">
-        ✏️ Рисование
-    </button>
-
-    <button id="objectButton">
-        ⬛ Объект
-    </button>
-
-    <button id="clearButton">
-        🗑 Очистить
-    </button>
-
-</div>
-
-<div id="status">
-    Режим: ✏️ Рисование
-</div>
-
-<div id="fps">
-    FPS: --
-</div>
-
-
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-
-
-<script>
-
-/* =====================================================
-   ЭЛЕМЕНТЫ
-===================================================== */
-
-const video =
-    document.getElementById("video");
-
-const canvas =
-    document.getElementById("canvas");
-
-const ctx =
-    canvas.getContext("2d");
-
-const drawButton =
-    document.getElementById("drawButton");
-
-const objectButton =
-    document.getElementById("objectButton");
-
-const clearButton =
-    document.getElementById("clearButton");
-
-const status =
-    document.getElementById("status");
-
-const fpsText =
-    document.getElementById("fps");
-
-
-/* =====================================================
-   РАЗМЕР
-===================================================== */
-
-let W = window.innerWidth;
-let H = window.innerHeight;
-
-function resize() {
-
-    W = window.innerWidth;
-    H = window.innerHeight;
-
-    canvas.width = W;
-    canvas.height = H;
-
-}
-
-resize();
-
-window.addEventListener(
-    "resize",
-    resize
-);
-
-
-/* =====================================================
-   РИСОВАНИЕ
-===================================================== */
-
-const drawingCanvas =
-    document.createElement("canvas");
-
-const drawingCtx =
-    drawingCanvas.getContext("2d");
-
-drawingCanvas.width = W;
-drawingCanvas.height = H;
-
-window.addEventListener(
-    "resize",
-    () => {
-
-        drawingCanvas.width = W;
-        drawingCanvas.height = H;
-
-    }
-);
-
-
-let lastDrawPoint = null;
-
-
-function drawLine(x, y) {
-
-    if (!lastDrawPoint) {
-
-        lastDrawPoint = {
-            x,
-            y
-        };
-
-        return;
-    }
-
-    drawingCtx.beginPath();
-
-    drawingCtx.moveTo(
-        lastDrawPoint.x,
-        lastDrawPoint.y
-    );
-
-    drawingCtx.lineTo(
-        x,
-        y
-    );
-
-    drawingCtx.strokeStyle =
-        "#00ffcc";
-
-    drawingCtx.lineWidth = 6;
-
-    drawingCtx.lineCap =
-        "round";
-
-    drawingCtx.lineJoin =
-        "round";
-
-    drawingCtx.stroke();
-
-    lastDrawPoint = {
-        x,
-        y
-    };
-}
-
-
-/* =====================================================
-   РЕЖИМ
-===================================================== */
-
-let mode = "draw";
-
-
-drawButton.onclick = () => {
-
-    mode = "draw";
-
-    drawButton.classList.add("active");
-    objectButton.classList.remove("active");
-
-    status.textContent =
-        "Режим: ✏️ Рисование";
-
-    resetGrab();
-
-};
-
-
-objectButton.onclick = () => {
-
-    mode = "object";
-
-    objectButton.classList.add("active");
-    drawButton.classList.remove("active");
-
-    status.textContent =
-        "Режим: ⬛ Объект — 🤏 схвати угол двумя пальцами";
-
-    lastDrawPoint = null;
-
-};
-
-
-clearButton.onclick = () => {
-
-    drawingCtx.clearRect(
-        0,
-        0,
-        W,
-        H
-    );
-
-};
-
-
-/* =====================================================
-   ОБЪЕКТ
-===================================================== */
-
-let object = {
-
-    x: W / 2 - 150,
-
-    y: H / 2 - 100,
-
-    width: 300,
-
-    height: 200
-
-};
-
-
-/*
-   Минимальный размер
-*/
-
-const MIN_SIZE = 60;
-
-
-/* =====================================================
-   РУКИ
-===================================================== */
-
-let detectedHands = [];
-
-let processing = false;
-
-let lastProcessTime = 0;
-
-const PROCESS_INTERVAL = 33;
-
-
-/* =====================================================
-   ПРЕОБРАЗОВАНИЕ КООРДИНАТ
-===================================================== */
-
-function screenPoint(point) {
-
-    return {
-
-        x: (1 - point.x) * W,
-
-        y: point.y * H
-
-    };
-
-}
-
-
-/* =====================================================
-   MEDIAPIPE
-===================================================== */
-
-const hands =
-    new Hands({
-
-        locateFile: file => {
-
-            return (
-                "https://cdn.jsdelivr.net/npm/" +
-                "@mediapipe/hands/" +
-                file
-            );
-
+    <div id="info">Нажмите кнопку, чтобы начать AR</div>
+
+    <div id="reticle"></div>
+
+    <div id="controls">
+        <button data-color="0x4CAF50" class="active"><span class="color-dot" style="background:#4CAF50"></span>Зелёный</button>
+        <button data-color="0x2196F3"><span class="color-dot" style="background:#2196F3"></span>Синий</button>
+        <button data-color="0xFF5722"><span class="color-dot" style="background:#FF5722"></span>Оранжевый</button>
+        <button data-color="0xE91E63"><span class="color-dot" style="background:#E91E63"></span>Розовый</button>
+        <button id="clear-btn">🗑️ Очистить</button>
+    </div>
+
+    <button id="ar-button">🚀 Начать AR</button>
+
+    <div id="not-supported" style="display:none">
+        <h2>😕 WebXR не поддерживается</h2>
+        <p>Ваш браузер или устройство не поддерживает AR.</p>
+        <p><b>Что нужно:</b></p>
+        <p>📱 Android + Chrome (последняя версия)</p>
+        <p>📱 iOS 17+ — WebXR работает частично</p>
+        <p>💻 На ПК нужен WebXR эмулятор или VR-шлем</p>
+        <p style="margin-top:20px;opacity:0.7">На ПК можно попробовать через расширение WebXR API Emulator</p>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
         }
-
-    });
-
-
-hands.setOptions({
-
-    /*
-     * Две руки нужны для
-     * одновременного изменения
-     * двух углов.
-     */
-
-    maxNumHands: 2,
-
-    /*
-     * 1 = полная модель руки.
-     */
-
-    modelComplexity: 1,
-
-    minDetectionConfidence: 0.6,
-
-    minTrackingConfidence: 0.6
-
-});
-
-
-/* =====================================================
-   РЕЗУЛЬТАТ MEDIAPIPE
-===================================================== */
-
-hands.onResults(results => {
-
-    detectedHands = [];
-
-    if (
-        !results.multiHandLandmarks
-    ) {
-
-        return;
-
     }
-
-
-    for (
-        let i = 0;
-        i < results.multiHandLandmarks.length;
-        i++
-    ) {
-
-        const landmarks =
-            results.multiHandLandmarks[i];
-
-
-        const index =
-            screenPoint(landmarks[8]);
-
-        const thumb =
-            screenPoint(landmarks[4]);
-
-        const indexPIP =
-            screenPoint(landmarks[6]);
-
-
-        /*
-         * Полная модель руки
-         */
-
-        detectedHands.push({
-
-            landmarks,
-
-            index,
-
-            thumb,
-
-            indexPIP,
-
-            pinching: false,
-
-            pinchPoint: {
-
-                x: (index.x + thumb.x) / 2,
-
-                y: (index.y + thumb.y) / 2
-
-            }
-
-        });
-
-    }
-
-});
-
-
-/* =====================================================
-   PINCH
-===================================================== */
-
-function updatePinches() {
-
-    for (
-        const hand of detectedHands
-    ) {
-
-        const d =
-            distance(
-                hand.index,
-                hand.thumb
-            );
-
-
-        /*
-         * Большой и указательный
-         * пальцы соприкасаются.
-         */
-
-        hand.pinching =
-            d < 45;
-
-
-        hand.pinchPoint = {
-
-            x:
-                (hand.index.x +
-                 hand.thumb.x) / 2,
-
-            y:
-                (hand.index.y +
-                 hand.thumb.y) / 2
-
-        };
-
-    }
-
-}
-
-
-/* =====================================================
-   РАССТОЯНИЕ
-===================================================== */
-
-function distance(a, b) {
-
-    const dx =
-        a.x - b.x;
-
-    const dy =
-        a.y - b.y;
-
-    return Math.sqrt(
-        dx * dx +
-        dy * dy
-    );
-
-}
-
-
-/* =====================================================
-   УГЛЫ ОБЪЕКТА
-===================================================== */
-
-function getCorners() {
-
-    return {
-
-        tl: {
-            x: object.x,
-            y: object.y
-        },
-
-        tr: {
-            x:
-                object.x +
-                object.width,
-
-            y:
-                object.y
-        },
-
-        bl: {
-            x:
-                object.x,
-
-            y:
-                object.y +
-                object.height
-        },
-
-        br: {
-            x:
-                object.x +
-                object.width,
-
-            y:
-                object.y +
-                object.height
-        }
-
-    };
-
-}
-
-
-/* =====================================================
-   ОПРЕДЕЛЕНИЕ УГЛА
-===================================================== */
-
-function nearestCorner(point) {
-
-    const corners =
-        getCorners();
-
-    let closest = null;
-
-    let closestDistance = 999999;
-
-
-    for (
-        const name in corners
-    ) {
-
-        const d =
-            distance(
-                point,
-                corners[name]
-            );
-
-
-        if (
-            d < closestDistance
-        ) {
-
-            closestDistance = d;
-
-            closest = name;
-
-        }
-
-    }
-
-
-    if (
-        closestDistance < 65
-    ) {
-
-        return closest;
-
-    }
-
-
-    return null;
-
-}
-
-
-/* =====================================================
-   ПРОВЕРКА ВНУТРИ ОБЪЕКТА
-===================================================== */
-
-function insideObject(point) {
-
-    return (
-
-        point.x >= object.x &&
-
-        point.x <=
-            object.x +
-            object.width &&
-
-        point.y >= object.y &&
-
-        point.y <=
-            object.y +
-            object.height
-
-    );
-
-}
-
-
-/* =====================================================
-   УПРАВЛЕНИЕ
-===================================================== */
-
-let grabbed = [];
-
-
-/*
-   grabbed:
-
-   {
-       handIndex,
-       type,
-       corner,
-       startPoint,
-       startObject
-   }
-*/
-
-
-function resetGrab() {
-
-    grabbed = [];
-
-}
-
-
-/* =====================================================
-   НАЧАЛО ЗАХВАТА
-===================================================== */
-
-function startGrab() {
-
-    grabbed = [];
-
-
-    for (
-        let i = 0;
-        i < detectedHands.length;
-        i++
-    ) {
-
-        const hand =
-            detectedHands[i];
-
-
-        if (!hand.pinching) {
-
-            continue;
-
-        }
-
-
-        const point =
-            hand.pinchPoint;
-
-
-        const corner =
-            nearestCorner(point);
-
-
-        /*
-         * Сначала проверяем угол.
-         */
-
-        if (corner) {
-
-            grabbed.push({
-
-                handIndex: i,
-
-                type: "resize",
-
-                corner,
-
-                startPoint: {
-                    x: point.x,
-                    y: point.y
-                },
-
-                startObject: {
-                    x: object.x,
-                    y: object.y,
-                    width: object.width,
-                    height: object.height
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+        // ============ ПРОВЕРКА ПОДДЕРЖКИ ============
+        const infoEl = document.getElementById('info');
+        const arButtonEl = document.getElementById('ar-button');
+        const controlsEl = document.getElementById('controls');
+        const reticleEl = document.getElementById('reticle');
+        const notSupported = document.getElementById('not-supported');
+
+        if (!navigator.xr) {
+            notSupported.style.display = 'flex';
+            arButtonEl.style.display = 'none';
+        } else {
+            navigator.xr.isSessionSupported('immersive-ar').then(supported => {
+                if (!supported) {
+                    notSupported.style.display = 'flex';
+                    arButtonEl.style.display = 'none';
                 }
+            });
+        }
 
+        // ============ ОСНОВНЫЕ ОБЪЕКТЫ ============
+        let renderer, scene, camera;
+        let reticle, hitTestSource = null, hitTestSourceRequested = false;
+        let currentColor = 0x4CAF50;
+        const cubes = [];
+
+        init();
+
+        function init() {
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+            // Освещение
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+            dirLight.position.set(1, 2, 1);
+            scene.add(dirLight);
+
+            // Рендерер
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // Прицел (куда ставить куб)
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry(0.08, 0.10, 32).rotateX(-Math.PI / 2),
+                new THREE.MeshBasicMaterial({ color: 0xffffff })
+            );
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
+
+            // AR-кнопка от Three.js
+            const arButton = ARButton.createButton(renderer, {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.body }
+            });
+            arButton.style.display = 'none'; // скрываем, у нас своя
+            arButton.id = 'three-ar-button';
+            document.body.appendChild(arButton);
+
+            // Своя кнопка → кликаем по Three.js-кнопке
+            arButtonEl.addEventListener('click', () => {
+                document.getElementById('three-ar-button').click();
             });
 
-            continue;
+            // События сессии
+            renderer.xr.addEventListener('sessionstart', onSessionStart);
+            renderer.xr.addEventListener('sessionend', onSessionEnd);
 
+            // Клик по экрану — спавн куба
+            renderer.domElement.addEventListener('click', onScreenClick);
+            // Для мобильных — touch
+            renderer.domElement.addEventListener('touchend', onScreenClick);
+
+            renderer.setAnimationLoop(render);
         }
 
+        // ============ СТАРТ/КОНЕЦ AR ============
+        function onSessionStart() {
+            infoEl.textContent = 'Наведите на поверхность и тапните, чтобы поставить куб';
+            arButtonEl.style.display = 'none';
+            controlsEl.style.display = 'flex';
+            reticleEl.style.display = 'block';
 
-        /*
-         * Если угол не выбран,
-         * можно схватить объект
-         * внутри и двигать его.
-         */
+            // показываем кнопки Three.js внизу скрываем
+            const threeBtn = document.getElementById('three-ar-button');
+            if (threeBtn) threeBtn.style.display = 'none';
 
-        if (
-            insideObject(point)
-        ) {
+            // прячем нашу AR-кнопку
+            arButtonEl.style.display = 'none';
+        }
 
-            grabbed.push({
+        function onSessionEnd() {
+            infoEl.textContent = 'Нажмите кнопку, чтобы начать AR';
+            arButtonEl.style.display = 'block';
+            controlsEl.style.display = 'none';
+            reticleEl.style.display = 'none';
+            reticle.visible = false;
 
-                handIndex: i,
+            // очищаем кубы
+            cubes.forEach(c => scene.remove(c));
+            cubes.length = 0;
 
-                type: "move",
+            hitTestSource = null;
+            hitTestSourceRequested = false;
+        }
 
-                startPoint: {
-                    x: point.x,
-                    y: point.y
-                },
+        // ============ HIT-TEST (поиск поверхностей) ============
+        function onScreenClick(event) {
+            if (reticle.visible && renderer.xr.isPresenting) {
+                spawnCube(reticle.matrix);
+                // вибро-отклик если есть
+                if (navigator.vibrate) navigator.vibrate(30);
+            }
+        }
 
-                startObject: {
-                    x: object.x,
-                    y: object.y,
-                    width: object.width,
-                    height: object.height
-                }
-
+        // ============ СПАВН КУБА ============
+        function spawnCube(matrix) {
+            const size = 0.1 + Math.random() * 0.1; // 10-20 см
+            const geometry = new THREE.BoxGeometry(size, size, size);
+            const material = new THREE.MeshStandardMaterial({
+                color: currentColor,
+                roughness: 0.4,
+                metalness: 0.1
             });
+            const cube = new THREE.Mesh(geometry, material);
 
+            // Позиция из матрицы hit-test
+            const position = new THREE.Vector3();
+            const rotation = new THREE.Quaternion();
+            const scale = new THREE.Vector3();
+            matrix.decompose(position, rotation, scale);
+
+            // Немного приподнимаем, чтобы куб стоял на поверхности
+            position.y += size / 2;
+
+            cube.position.copy(position);
+            // Случайное вращение вокруг вертикальной оси
+            cube.rotation.y = Math.random() * Math.PI * 2;
+
+            // Немного анимации — плавное появление
+            cube.scale.set(0.01, 0.01, 0.01);
+
+            scene.add(cube);
+            cubes.push(cube);
         }
 
-    }
-
-}
-
-
-/* =====================================================
-   ОБНОВЛЕНИЕ ЗАХВАТА
-===================================================== */
-
-function updateGrab() {
-
-    if (
-        grabbed.length === 0
-    ) {
-
-        return;
-
-    }
-
-
-    /*
-     * Одна рука
-     */
-
-    if (
-        grabbed.length === 1
-    ) {
-
-        const g =
-            grabbed[0];
-
-        const hand =
-            detectedHands[g.handIndex];
-
-
-        if (
-            !hand ||
-            !hand.pinching
-        ) {
-
-            resetGrab();
-
-            return;
-
-        }
-
-
-        const p =
-            hand.pinchPoint;
-
-
-        /*
-         * ДВИЖЕНИЕ
-         */
-
-        if (
-            g.type === "move"
-        ) {
-
-            const dx =
-                p.x -
-                g.startPoint.x;
-
-            const dy =
-                p.y -
-                g.startPoint.y;
-
-
-            object.x =
-                g.startObject.x + dx;
-
-            object.y =
-                g.startObject.y + dy;
-
-            return;
-
-        }
-
-
-        /*
-         * ИЗМЕНЕНИЕ РАЗМЕРА
-         */
-
-        if (
-            g.type === "resize"
-        ) {
-
-            resizeFromCorner(
-                g.corner,
-                p,
-                g.startObject
-            );
-
-        }
-
-    }
-
-
-    /*
-     * ДВЕ РУКИ
-     */
-
-    if (
-        grabbed.length >= 2
-    ) {
-
-        const g1 =
-            grabbed[0];
-
-        const g2 =
-            grabbed[1];
-
-
-        const h1 =
-            detectedHands[g1.handIndex];
-
-        const h2 =
-            detectedHands[g2.handIndex];
-
-
-        if (
-            !h1 ||
-            !h2 ||
-            !h1.pinching ||
-            !h2.pinching
-        ) {
-
-            resetGrab();
-
-            return;
-
-        }
-
-
-        /*
-         * Если обе руки схватили углы,
-         * строим новый прямоугольник
-         * между ними.
-         */
-
-        if (
-            g1.type === "resize" &&
-            g2.type === "resize"
-        ) {
-
-            const p1 =
-                h1.pinchPoint;
-
-            const p2 =
-                h2.pinchPoint;
-
-
-            updateTwoCorners(
-                g1.corner,
-                p1,
-                g2.corner,
-                p2
-            );
-
-        }
-
-    }
-
-}
-
-
-/* =====================================================
-   ИЗМЕНЕНИЕ ОДНИМ УГЛОМ
-===================================================== */
-
-function resizeFromCorner(
-    corner,
-    point,
-    start
-) {
-
-    let left =
-        start.x;
-
-    let right =
-        start.x +
-        start.width;
-
-    let top =
-        start.y;
-
-    let bottom =
-        start.y +
-        start.height;
-
-
-    if (
-        corner === "tl"
-    ) {
-
-        left = point.x;
-        top = point.y;
-
-    }
-
-
-    if (
-        corner === "tr"
-    ) {
-
-        right = point.x;
-        top = point.y;
-
-    }
-
-
-    if (
-        corner === "bl"
-    ) {
-
-        left = point.x;
-        bottom = point.y;
-
-    }
-
-
-    if (
-        corner === "br"
-    ) {
-
-        right = point.x;
-        bottom = point.y;
-
-    }
-
-
-    /*
-     * Не даём перевернуть
-     * объект.
-     */
-
-    if (
-        right - left <
-        MIN_SIZE
-    ) {
-
-        if (
-            corner === "tl" ||
-            corner === "bl"
-        ) {
-
-            left =
-                right -
-                MIN_SIZE;
-
-        } else {
-
-            right =
-                left +
-                MIN_SIZE;
-
-        }
-
-    }
-
-
-    if (
-        bottom - top <
-        MIN_SIZE
-    ) {
-
-        if (
-            corner === "tl" ||
-            corner === "tr"
-        ) {
-
-            top =
-                bottom -
-                MIN_SIZE;
-
-        } else {
-
-            bottom =
-                top +
-                MIN_SIZE;
-
-        }
-
-    }
-
-
-    object.x =
-        left;
-
-    object.y =
-        top;
-
-    object.width =
-        right - left;
-
-    object.height =
-        bottom - top;
-
-}
-
-
-/* =====================================================
-   ДВА УГЛА
-===================================================== */
-
-function updateTwoCorners(
-    corner1,
-    point1,
-    corner2,
-    point2
-) {
-
-    let left = object.x;
-
-    let right =
-        object.x +
-        object.width;
-
-    let top = object.y;
-
-    let bottom =
-        object.y +
-        object.height;
-
-
-    /*
-     * Каждый захваченный угол
-     * устанавливаем в положение пальца.
-     */
-
-    const points = {};
-
-
-    points[corner1] =
-        point1;
-
-    points[corner2] =
-        point2;
-
-
-    /*
-     * Определяем крайние координаты
-     * независимо по X и Y.
-     */
-
-    const allPoints = [
-        point1,
-        point2
-    ];
-
-
-    left =
-        Math.min(
-            allPoints[0].x,
-            allPoints[1].x
-        );
-
-    right =
-        Math.max(
-            allPoints[0].x,
-            allPoints[1].x
-        );
-
-    top =
-        Math.min(
-            allPoints[0].y,
-            allPoints[1].y
-        );
-
-    bottom =
-        Math.max(
-            allPoints[0].y,
-            allPoints[1].y
-        );
-
-
-    /*
-     * Минимальная ширина.
-     */
-
-    if (
-        right - left <
-        MIN_SIZE
-    ) {
-
-        right =
-            left +
-            MIN_SIZE;
-
-    }
-
-
-    /*
-     * Минимальная высота.
-     */
-
-    if (
-        bottom - top <
-        MIN_SIZE
-    ) {
-
-        bottom =
-            top +
-            MIN_SIZE;
-
-    }
-
-
-    object.x =
-        left;
-
-    object.y =
-        top;
-
-    object.width =
-        right - left;
-
-    object.height =
-        bottom - top;
-
-}
-
-
-/* =====================================================
-   ОТРИСОВКА
-===================================================== */
-
-function render() {
-
-    requestAnimationFrame(
-        render
-    );
-
-
-    ctx.clearRect(
-        0,
-        0,
-        W,
-        H
-    );
-
-
-    /*
-     * Рисунок
-     */
-
-    ctx.drawImage(
-        drawingCanvas,
-        0,
-        0
-    );
-
-
-    /*
-     * Руки
-     */
-
-    renderHands();
-
-
-    /*
-     * Режим объекта
-     */
-
-    if (
-        mode === "object"
-    ) {
-
-        renderObject();
-
-    }
-
-
-    /*
-     * Рисование
-     */
-
-    if (
-        mode === "draw"
-    ) {
-
-        renderDrawing();
-
-    }
-
-}
-
-
-requestAnimationFrame(
-    render
-);
-
-
-/* =====================================================
-   ПОЛНАЯ МОДЕЛЬ РУКИ
-===================================================== */
-
-function renderHands() {
-
-    /*
-     * MediaPipe drawing_utils
-     * работает с canvas.
-     *
-     * Поэтому передаём зеркальные
-     * координаты вручную.
-     */
-
-    for (
-        const hand of detectedHands
-    ) {
-
-        const mirrored =
-            hand.landmarks.map(
-                point => {
-
-                    return {
-
-                        x: 1 - point.x,
-
-                        y: point.y,
-
-                        z: point.z
-
-                    };
-
+        // ============ АНИМАЦИЯ ПОЯВЛЕНИЯ ============
+        function animateCubes() {
+            cubes.forEach(cube => {
+                const s = cube.scale.x;
+                if (s < 1) {
+                    const newScale = Math.min(1, s + 0.1);
+                    cube.scale.set(newScale, newScale, newScale);
+                } else {
+                    // легкое вращение
+                    cube.rotation.y += 0.003;
                 }
-            );
-
-
-        /*
-         * Соединения пальцев.
-         */
-
-        drawConnectors(
-            ctx,
-            mirrored,
-            HAND_CONNECTIONS,
-            {
-                color: "#00ff88",
-                lineWidth: 3
-            }
-        );
-
-
-        /*
-         * 21 точка руки.
-         */
-
-        drawLandmarks(
-            ctx,
-            mirrored,
-            {
-                color: "#ffffff",
-                lineWidth: 1,
-                radius: 4
-            }
-        );
-
-
-        /*
-         * Если пальцы зажаты,
-         * подсвечиваем место захвата.
-         */
-
-        if (
-            hand.pinching
-        ) {
-
-            ctx.beginPath();
-
-            ctx.arc(
-                hand.pinchPoint.x,
-                hand.pinchPoint.y,
-                11,
-                0,
-                Math.PI * 2
-            );
-
-            ctx.fillStyle =
-                "#00ffcc";
-
-            ctx.fill();
-
+            });
         }
 
-    }
-
-}
-
-
-/* =====================================================
-   ОБЪЕКТ
-===================================================== */
-
-function renderObject() {
-
-    ctx.save();
-
-
-    /*
-     * Свечение.
-     */
-
-    ctx.shadowColor =
-        "#00ffcc";
-
-    ctx.shadowBlur = 18;
-
-
-    ctx.strokeStyle =
-        "#00ffcc";
-
-    ctx.lineWidth = 4;
-
-
-    ctx.strokeRect(
-
-        object.x,
-
-        object.y,
-
-        object.width,
-
-        object.height
-
-    );
-
-
-    ctx.shadowBlur = 0;
-
-
-    /*
-     * Четыре угла.
-     */
-
-    const corners =
-        getCorners();
-
-
-    for (
-        const name in corners
-    ) {
-
-        const p =
-            corners[name];
-
-
-        ctx.beginPath();
-
-        ctx.arc(
-            p.x,
-            p.y,
-            14,
-            0,
-            Math.PI * 2
-        );
-
-        ctx.fillStyle =
-            "#ffffff";
-
-        ctx.fill();
-
-
-        ctx.beginPath();
-
-        ctx.arc(
-            p.x,
-            p.y,
-            7,
-            0,
-            Math.PI * 2
-        );
-
-        ctx.fillStyle =
-            "#00ffcc";
-
-        ctx.fill();
-
-    }
-
-
-    ctx.restore();
-
-}
-
-
-/* =====================================================
-   РИСОВАНИЕ
-===================================================== */
-
-function renderDrawing() {
-
-    if (
-        detectedHands.length === 0
-    ) {
-
-        lastDrawPoint = null;
-
-        return;
-
-    }
-
-
-    const hand =
-        detectedHands[0];
-
-
-    /*
-     * Указательный палец
-     * должен быть вытянут.
-     */
-
-    const extended =
-        hand.index.y <
-        hand.indexPIP.y;
-
-
-    /*
-     * Не рисуем, если большой
-     * палец слишком близко.
-     */
-
-    if (
-        extended &&
-        !hand.pinching
-    ) {
-
-        drawLine(
-            hand.index.x,
-            hand.index.y
-        );
-
-
-        /*
-         * Курсор.
-         */
-
-        ctx.beginPath();
-
-        ctx.arc(
-            hand.index.x,
-            hand.index.y,
-            7,
-            0,
-            Math.PI * 2
-        );
-
-        ctx.fillStyle =
-            "#00ffcc";
-
-        ctx.fill();
-
-    } else {
-
-        lastDrawPoint = null;
-
-    }
-
-}
-
-
-/* =====================================================
-   ОБРАБОТКА ЗАХВАТА
-===================================================== */
-
-let wasPinching = false;
-
-
-function updateInteraction() {
-
-    updatePinches();
-
-
-    if (
-        mode !== "object"
-    ) {
-
-        resetGrab();
-
-        return;
-
-    }
-
-
-    const pinchingNow =
-        detectedHands.some(
-            h => h.pinching
-        );
-
-
-    /*
-     * Только что начали хватать.
-     */
-
-    if (
-        pinchingNow &&
-        !wasPinching
-    ) {
-
-        startGrab();
-
-    }
-
-
-    /*
-     * Продолжаем хват.
-     */
-
-    if (
-        pinchingNow
-    ) {
-
-        updateGrab();
-
-    }
-
-
-    /*
-     * Отпустили.
-     */
-
-    if (
-        !pinchingNow
-    ) {
-
-        resetGrab();
-
-    }
-
-
-    wasPinching =
-        pinchingNow;
-
-}
-
-
-/* =====================================================
-   LOOP ВЗАИМОДЕЙСТВИЯ
-===================================================== */
-
-function interactionLoop() {
-
-    updateInteraction();
-
-    requestAnimationFrame(
-        interactionLoop
-    );
-
-}
-
-requestAnimationFrame(
-    interactionLoop
-);
-
-
-/* =====================================================
-   FPS
-===================================================== */
-
-let frames = 0;
-
-let fpsStart =
-    performance.now();
-
-
-function fpsLoop(time) {
-
-    frames++;
-
-
-    if (
-        time - fpsStart >= 1000
-    ) {
-
-        fpsText.textContent =
-            "FPS: " + frames;
-
-        frames = 0;
-
-        fpsStart = time;
-
-    }
-
-
-    requestAnimationFrame(
-        fpsLoop
-    );
-
-}
-
-requestAnimationFrame(
-    fpsLoop
-);
-
-
-/* =====================================================
-   РАСПОЗНАВАНИЕ
-===================================================== */
-
-async function processHands(time) {
-
-    requestAnimationFrame(
-        processHands
-    );
-
-
-    if (
-        video.readyState < 2
-    ) {
-
-        return;
-
-    }
-
-
-    if (
-        processing
-    ) {
-
-        return;
-
-    }
-
-
-    if (
-        time - lastProcessTime <
-        PROCESS_INTERVAL
-    ) {
-
-        return;
-
-    }
-
-
-    lastProcessTime =
-        time;
-
-    processing = true;
-
-
-    try {
-
-        await hands.send({
-            image: video
+        // ============ RENDER LOOP ============
+        function render(timestamp, frame) {
+            if (frame) {
+                const referenceSpace = renderer.xr.getReferenceSpace();
+                const session = renderer.xr.getSession();
+
+                // Запрашиваем hit-test source один раз
+                if (hitTestSourceRequested === false) {
+                    session.requestReferenceSpace('viewer').then((viewerSpace) => {
+                        session.requestHitTestSource({ space: viewerSpace }).then((source) => {
+                            hitTestSource = source;
+                        });
+                    });
+                    session.addEventListener('end', () => {
+                        hitTestSourceRequested = false;
+                        hitTestSource = null;
+                    });
+                    hitTestSourceRequested = true;
+                }
+
+                // Обновляем позицию прицела
+                if (hitTestSource) {
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
+                    if (hitTestResults.length) {
+                        const hit = hitTestResults[0];
+                        const pose = hit.getPose(referenceSpace);
+                        if (pose) {
+                            reticle.visible = true;
+                            reticle.matrix.fromArray(pose.transform.matrix);
+                        }
+                    } else {
+                        reticle.visible = false;
+                    }
+                }
+            }
+
+            animateCubes();
+            renderer.render(scene, camera);
+        }
+
+        // ============ UI — ВЫБОР ЦВЕТА ============
+        document.querySelectorAll('#controls button[data-color]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#controls button[data-color]').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentColor = parseInt(btn.dataset.color);
+            });
         });
 
-    } catch (error) {
+        // Очистить всё
+        document.getElementById('clear-btn').addEventListener('click', () => {
+            cubes.forEach(c => scene.remove(c));
+            cubes.length = 0;
+        });
 
-        console.error(error);
-
-    }
-
-
-    processing = false;
-
-}
-
-
-requestAnimationFrame(
-    processHands
-);
-
-
-/* =====================================================
-   КАМЕРА
-===================================================== */
-
-navigator.mediaDevices
-.getUserMedia({
-
-    video: {
-
-        width: {
-            ideal: 1280
-        },
-
-        height: {
-            ideal: 720
-        },
-
-        frameRate: {
-            ideal: 30,
-            max: 30
-        }
-
-    },
-
-    audio: false
-
-})
-.then(stream => {
-
-    video.srcObject =
-        stream;
-
-})
-.catch(error => {
-
-    console.error(error);
-
-    alert(
-        "Не удалось получить доступ к камере."
-    );
-
-});
-
-</script>
-
+        // ============ RESIZE ============
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
 </body>
 </html>
-```
