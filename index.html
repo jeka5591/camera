@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Рисование пальцем в воздухе</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    body {
+      background: #0a0a1a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    #app {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+
+    video {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      filter: brightness(1.05) contrast(1.05);
+    }
+
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+      pointer-events: none;
+    }
+
+    #status {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 40px;
+      font-size: 16px;
+      font-weight: 500;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      z-index: 100;
+      text-align: center;
+      pointer-events: none;
+      transition: opacity 0.3s;
+      white-space: nowrap;
+    }
+
+    #status.hidden {
+      opacity: 0;
+    }
+
+    #status .highlight {
+      color: #7cff7c;
+      font-weight: 700;
+    }
+
+    #status .warn {
+      color: #ffaa33;
+    }
+
+    .controls {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      z-index: 100;
+      pointer-events: auto;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .controls button {
+      padding: 12px 24px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 40px;
+      background: rgba(20, 20, 40, 0.75);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      transition: all 0.2s;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      white-space: nowrap;
+    }
+
+    .controls button:hover {
+      background: rgba(60, 60, 120, 0.9);
+      border-color: rgba(255, 255, 255, 0.4);
+      transform: translateY(-2px);
+    }
+
+    .controls button:active {
+      transform: translateY(0px) scale(0.97);
+    }
+
+    .controls button.clear {
+      background: rgba(220, 50, 50, 0.7);
+      border-color: rgba(255, 100, 100, 0.3);
+    }
+
+    .controls button.clear:hover {
+      background: rgba(255, 60, 60, 0.9);
+    }
+
+    /* Индикатор рисования */
+    .draw-indicator {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #333;
+      border: 2px solid rgba(255,255,255,0.3);
+      z-index: 100;
+      transition: background 0.15s, box-shadow 0.15s;
+    }
+
+    .draw-indicator.active {
+      background: #7cff7c;
+      box-shadow: 0 0 20px #7cff7c;
+    }
+
+    /* Адаптив */
+    @media (max-width: 600px) {
+      #status {
+        font-size: 13px;
+        padding: 10px 18px;
+        white-space: normal;
+        max-width: 90vw;
+      }
+      .controls button {
+        padding: 10px 18px;
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <div class="video-wrapper">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <div id="status">Запрос доступа к камере...</div>
+  <div class="draw-indicator" id="drawIndicator"></div>
+
+  <div class="controls">
+    <button id="clearBtn" class="clear">🗑 Очистить</button>
+  </div>
+</div>
+
+<!-- MediaPipe Hands -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+
+<script>
+(async function() {
+  'use strict';
+
+  // === Элементы ===
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const statusEl = document.getElementById('status');
+  const drawIndicator = document.getElementById('drawIndicator');
+  const clearBtn = document.getElementById('clearBtn');
+
+  // === Состояние ===
+  let isDrawing = false;
+  let lastPoint = null;       // {x, y} в координатах canvas (CSS пиксели)
+  let camera = null;
+  let canvasWidth = 0;
+  let canvasHeight = 0;
+
+  // Сглаживание
+  const SMOOTHING = 0.5;      // 0..1, чем больше — тем плавнее, но с задержкой
+  let smoothedPoint = null;
+
+  // Порог "поднятого указательного пальца" — расстояние между кончиком (8)
+  // и основанием (5) указательного пальца в долях от размера ладони
+  const FINGER_EXTENDED_RATIO = 0.7;
+
+  // Толщина линии
+  const LINE_WIDTH = 6;
+  const LINE_COLOR = '#00e5ff';
+  const GLOW_COLOR = 'rgba(0, 229, 255, 0.35)';
+
+  // === Инициализация canvas ===
+  function resizeCanvas() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+
+    canvasWidth = rect.width;
+    canvasHeight = rect.height;
+
+    canvas.width = canvasWidth * dpr;
+    canvas.height = canvasHeight * dpr;
+    canvas.style.width = canvasWidth + 'px';
+    canvas.style.height = canvasHeight + 'px';
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Перерисовываем фон (прозрачный) — canvas прозрачен, видео под ним
+    // Но нужно восстановить настройки рисования
+    setupDrawingStyle();
+
+    // После ресайза холст очищается — это нормально,
+    // но если нужно сохранить рисунок — можно было бы сохранить в offscreen.
+    // Для простоты оставляем очистку.
+  }
+
+  function setupDrawingStyle() {
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = LINE_WIDTH;
+    ctx.strokeStyle = LINE_COLOR;
+    ctx.shadowColor = GLOW_COLOR;
+    ctx.shadowBlur = 12;
+  }
+
+  window.addEventListener('resize', () => {
+    resizeCanvas();
+  });
+
+  // === Очистка холста ===
+  function clearCanvas() {
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    lastPoint = null;
+    smoothedPoint = null;
+  }
+
+  clearBtn.addEventListener('click', clearCanvas);
+
+  // === Статус ===
+  function setStatus(text, isWarning = false) {
+    statusEl.innerHTML = text;
+    statusEl.classList.remove('hidden');
+    if (isWarning) {
+      statusEl.classList.add('warn');
+    } else {
+      statusEl.classList.remove('warn');
+    }
+  }
+
+  function hideStatus() {
+    statusEl.classList.add('hidden');
+  }
+
+  // === Индикатор рисования ===
+  function setDrawIndicator(active) {
+    if (active) {
+      drawIndicator.classList.add('active');
+    } else {
+      drawIndicator.classList.remove('active');
+    }
+  }
+
+  // === Утилита: расстояние между точками ===
+  function dist(a, b) {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  // === Проверка: поднят ли указательный палец ===
+  // Возвращает true, если палец выпрямлен (кончик дальше от запястья, чем основание)
+  function isIndexFingerExtended(landmarks) {
+    const wrist = landmarks[0];
+    const indexMcp = landmarks[5];   // основание указательного
+    const indexTip = landmarks[8];   // кончик указательного
+
+    // Расстояние от запястья до кончика и до основания
+    const dTip = dist(wrist, indexTip);
+    const dMcp = dist(wrist, indexMcp);
+
+    // Палец считается выпрямленным, если кончик значительно дальше основания
+    return dTip > dMcp * (1 + FINGER_EXTENDED_RATIO * 0.5) && dTip > dMcp * 1.15;
+  }
+
+  // === Основной колбэк MediaPipe ===
+  function onResults(results) {
+    // Результаты приходят с координатами в нормализованном виде [0..1]
+    // относительно видео (которое зеркально отражено через CSS scaleX(-1))
+
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      const landmarks = results.multiHandLandmarks[0];
+
+      // Кончик указательного пальца
+      const indexTip = landmarks[8];
+
+      // Проверяем, поднят ли указательный палец
+      const extended = isIndexFingerExtended(landmarks);
+
+      if (extended) {
+        // Переводим нормализованные координаты в пиксели canvas
+        // ВАЖНО: видео зеркально отражено через CSS, поэтому x нужно инвертировать
+        // Нормализованный x: 0 (лево в видео) → 1 (право в видео)
+        // После зеркала: 0 → 1 (право на экране), 1 → 0 (лево на экране)
+        // Поэтому экранный x = (1 - normX) * canvasWidth
+        const screenX = (1 - indexTip.x) * canvasWidth;
+        const screenY = indexTip.y * canvasHeight;
+
+        const currentPoint = { x: screenX, y: screenY };
+
+        // Сглаживание
+        if (smoothedPoint === null) {
+          smoothedPoint = { ...currentPoint };
+        } else {
+          smoothedPoint.x = smoothedPoint.x * (1 - SMOOTHING) + currentPoint.x * SMOOTHING;
+          smoothedPoint.y = smoothedPoint.y * (1 - SMOOTHING) + currentPoint.y * SMOOTHING;
+        }
+
+        const drawPoint = { x: smoothedPoint.x, y: smoothedPoint.y };
+
+        if (!isDrawing) {
+          // Начало рисования — запоминаем точку
+          isDrawing = true;
+          lastPoint = drawPoint;
+          setDrawIndicator(true);
+          hideStatus();
+        } else {
+          // Продолжение рисования — рисуем линию от прошлой точки
+          if (lastPoint) {
+            ctx.beginPath();
+            ctx.moveTo(lastPoint.x, lastPoint.y);
+            ctx.lineTo(drawPoint.x, drawPoint.y);
+            ctx.stroke();
+          }
+          lastPoint = drawPoint;
+        }
+      } else {
+        // Указательный палец не поднят — прекращаем рисование
+        if (isDrawing) {
+          isDrawing = false;
+          lastPoint = null;
+          smoothedPoint = null;
+          setDrawIndicator(false);
+        }
+      }
+    } else {
+      // Рука не обнаружена
+      if (isDrawing) {
+        isDrawing = false;
+        lastPoint = null;
+        smoothedPoint = null;
+        setDrawIndicator(false);
+      }
+    }
+  }
+
+  // === Инициализация MediaPipe Hands ===
+  const hands = new Hands({
+    locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`;
+    }
+  });
+
+  hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 0,          // 0 — быстрее, 1 — точнее
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6,
+  });
+
+  hands.onResults(onResults);
+
+  // === Запуск камеры ===
+  async function startCamera() {
+    try {
+      setStatus('⏳ Запрос доступа к камере...');
+
+      // Проверяем поддержку
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Ваш браузер не поддерживает доступ к камере');
+      }
+
+      // Запрашиваем камеру
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'user',
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      // Привязываем поток к видео
+      video.srcObject = stream;
+
+      // Ждём загрузки метаданных
+      await new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play().then(resolve).catch(resolve);
+        };
+      });
+
+      // Даём кадру отрисоваться
+      await new Promise(r => setTimeout(r, 300));
+
+      // Настраиваем canvas под размеры видео
+      resizeCanvas();
+      setupDrawingStyle();
+
+      setStatus('✋ <span class="highlight">Поднимите указательный палец</span> и рисуйте в воздухе!');
+
+      // Запускаем обработку через Camera Utils
+      camera = new Camera(video, {
+        onFrame: async () => {
+          await hands.send({ image: video });
+        },
+        width: 1280,
+        height: 720,
+      });
+
+      await camera.start();
+
+      // Скрываем статус через 4 секунды
+      setTimeout(() => {
+        hideStatus();
+      }, 4000);
+
+    } catch (err) {
+      console.error('Ошибка камеры:', err);
+
+      let message = '❌ Не удалось получить доступ к камере.';
+
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        message = '🚫 Доступ к камере запрещён. Разрешите доступ в настройках браузера и обновите страницу.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        message = '📷 Камера не найдена. Подключите камеру и обновите страницу.';
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        message = '⚠️ Камера уже используется другим приложением. Закройте его и обновите страницу.';
+      } else if (err.message) {
+        message = '❌ ' + err.message;
+      }
+
+      setStatus(message, true);
+    }
+  }
+
+  // === Старт ===
+  // Небольшая задержка, чтобы DOM точно загрузился
+  window.addEventListener('load', () => {
+    // Проверяем, что MediaPipe загрузился
+    if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+      setStatus('❌ Ошибка загрузки библиотеки MediaPipe. Проверьте интернет-соединение и обновите страницу.', true);
+      return;
+    }
+
+    startCamera();
+  });
+
+  // Начальная настройка canvas (на случай, если load уже прошёл)
+  if (document.readyState === 'complete') {
+    resizeCanvas();
+    setupDrawingStyle();
+  }
+
+})();
+</script>
+
+</body>
+</html>
