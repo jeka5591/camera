@@ -9,14 +9,11 @@
   body { background: #0a0a1a; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
   #app { position: relative; width: 100vw; height: 100vh; }
 
-  /* ВИДЕО — без зеркала. Что видит камера — то и на экране. */
   video {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
     object-fit: cover;
   }
-
-  /* Холсты — тоже без зеркала */
   canvas {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
@@ -122,7 +119,7 @@ const modeIndicator = document.getElementById('modeIndicator');
 // ============================================================
 // НАСТРОЙКИ
 // ============================================================
-const SMOOTHING = 0.5;            // отставание линии: 0 = нет, 0.9 = сильное
+const SMOOTHING = 0.5;
 const LINE_WIDTH = 8;
 const LINE_COLOR = '#00e5ff';
 const GLOW_COLOR = 'rgba(0,229,255,0.4)';
@@ -130,16 +127,30 @@ const TRACK_COLOR = '#ff3355';
 const TRACK_RADIUS = 12;
 const SQUARE_COLOR = '#ffcc00';
 
+// Размер квадрата при появлении (в пикселях экрана)
+const SQUARE_INITIAL_SIZE = 300;
+// Насколько близко палец должен быть к краю, чтобы "схватить" (в пикселях)
+const SQUARE_GRAB_DISTANCE = 60;
+// Минимальный размер квадрата
+const SQUARE_MIN_SIZE = 60;
+
 // ============================================================
 // СОСТОЯНИЕ
 // ============================================================
 let canvasWidth = 0;
 let canvasHeight = 0;
 let camera = null;
-let mode = 'draw';                // 'draw' | 'track' | 'square'
+let mode = 'draw';
 let isDrawing = false;
 let lastPoint = null;
-let square = { x: 0, y: 0, w: 0, h: 0, active: false };
+
+// Квадрат
+const square = {
+  x: 0, y: 0, w: 0, h: 0,
+  active: false,
+  // какой край сейчас "схвачен" пальцем: 'left'|'right'|'top'|'bottom'|null
+  grabbed: { left: false, right: false, top: false, bottom: false }
+};
 
 // ============================================================
 // CANVAS
@@ -197,7 +208,6 @@ function clearAll() {
 
   lastPoint = null;
   isDrawing = false;
-  square.active = false;
 }
 clearBtn.addEventListener('click', clearAll);
 
@@ -221,35 +231,40 @@ function updateModeIndicator() {
 }
 
 // ============================================================
-// КНОПКИ
+// ПЕРЕСЧЁТ КООРДИНАТ с учётом object-fit: cover
 // ============================================================
-trackBtn.addEventListener('click', () => {
-  mode = (mode === 'track') ? 'draw' : 'track';
-  isDrawing = false; lastPoint = null; square.active = false;
-  trackBtn.classList.toggle('active', mode === 'track');
-  squareBtn.classList.toggle('active', mode === 'square');
-  hands.setOptions({ maxNumHands: mode === 'square' ? 2 : 1 });
-  updateModeIndicator();
-  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+// Видео с object-fit: cover масштабируется, чтобы ЗАПОЛНИТЬ окно,
+// с сохранением пропорций. Часть кадра обрезается.
+// Нормализованные координаты (0..1) относятся к оригинальному кадру.
+// Мы должны найти, где на экране находится точка (normX, normY).
 
-  setStatus(mode === 'track'
-    ? '👋 <span class="highlight">Отслеживание</span>: кружки на кончиках пальцев'
-    : '✋ Ведите указательным пальцем');
-});
+function getVideoFit() {
+  const vw = video.videoWidth || 640;
+  const vh = video.videoHeight || 480;
+  const cw = canvasWidth;
+  const ch = canvasHeight;
 
-squareBtn.addEventListener('click', () => {
-  mode = (mode === 'square') ? 'draw' : 'square';
-  isDrawing = false; lastPoint = null; square.active = false;
-  squareBtn.classList.toggle('active', mode === 'square');
-  trackBtn.classList.toggle('active', mode === 'track');
-  hands.setOptions({ maxNumHands: mode === 'square' ? 2 : 1 });
-  updateModeIndicator();
-  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+  // Масштаб: видео должно ЗАПОЛНИТЬ окно (cover)
+  const scale = Math.max(cw / vw, ch / vh);
 
-  setStatus(mode === 'square'
-    ? '⬜ <span class="highlight">Квадрат</span>: покажите две руки и разводите указательные пальцы'
-    : '✋ Ведите указательным пальцем');
-});
+  // Размеры видео на экране
+  const displayW = vw * scale;
+  const displayH = vh * scale;
+
+  // Смещение (обрезанные части уходят в минус)
+  const offsetX = (cw - displayW) / 2;
+  const offsetY = (ch - displayH) / 2;
+
+  return { displayW, displayH, offsetX, offsetY };
+}
+
+function normToScreen(normX, normY) {
+  const fit = getVideoFit();
+  return {
+    x: fit.offsetX + normX * fit.displayW,
+    y: fit.offsetY + normY * fit.displayH
+  };
+}
 
 // ============================================================
 // УТИЛИТЫ
@@ -260,20 +275,6 @@ function dist(a, b) {
 }
 function isIndexExtended(lm) {
   return dist(lm[0], lm[8]) > dist(lm[0], lm[5]) * 1.15;
-}
-
-// ------------------------------------------------------------
-// ГЛАВНОЕ: перевод координат БЕЗ всяких инверсий
-// ------------------------------------------------------------
-// MediaPipe даёт normX, normY в системе СЫРОГО кадра камеры.
-// Мы НЕ зеркалим ни видео, ни холсты.
-// Значит: screenX = normX * width, screenY = normY * height.
-// Рука идёт влево → на экране влево. Всё согласовано.
-function normToScreen(normX, normY) {
-  return {
-    x: normX * canvasWidth,
-    y: normY * canvasHeight
-  };
 }
 
 // ============================================================
@@ -367,62 +368,190 @@ function drawTrackingOverlay(handsData) {
 // ============================================================
 // РЕЖИМ КВАДРАТА
 // ============================================================
-function drawSquareOverlay(handsData) {
-  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+// При включении режима создаём квадрат в центре экрана.
+// Палец может "схватить" любой из 4 краёв (left/right/top/bottom),
+// если он оказался близко к этому краю. При этом край начинает
+// следовать за пальцем. Отпустили (палец далеко / руки нет) — фиксируется.
 
-  let x1, y1, x2, y2;
-  if (handsData.length >= 2) {
-    const a = normToScreen(handsData[0][8].x, handsData[0][8].y);
-    const b = normToScreen(handsData[1][8].x, handsData[1][8].y);
-    x1 = a.x; y1 = a.y; x2 = b.x; y2 = b.y;
-    square.active = true;
-  } else if (handsData.length === 1) {
-    const tip = normToScreen(handsData[0][8].x, handsData[0][8].y);
-    const palm = normToScreen(handsData[0][9].x, handsData[0][9].y);
-    x1 = tip.x; y1 = tip.y;
-    x2 = palm.x + (palm.x - tip.x) * 1.5;
-    y2 = palm.y + (palm.y - tip.y) * 1.5;
-    square.active = true;
-  } else {
-    if (square.active) drawSquareShape(square.x, square.y, square.w, square.h);
+function initSquare() {
+  const s = SQUARE_INITIAL_SIZE;
+  square.w = s;
+  square.h = s;
+  square.x = (canvasWidth - s) / 2;
+  square.y = (canvasHeight - s) / 2;
+  square.active = true;
+  square.grabbed = { left: false, right: false, top: false, bottom: false };
+}
+
+function tryGrabSquare(handsData) {
+  // Собираем все активные точки пальцев (указательные)
+  const points = [];
+  for (const lm of handsData) {
+    if (isIndexExtended(lm)) {
+      points.push(normToScreen(lm[8].x, lm[8].y));
+    }
+  }
+
+  if (points.length === 0) {
+    // Рук нет — отпускаем все края
+    square.grabbed = { left: false, right: false, top: false, bottom: false };
     return;
   }
 
-  const left = Math.min(x1, x2);
-  const top = Math.min(y1, y2);
-  const w = Math.abs(x2 - x1);
-  const h = Math.abs(y2 - y1);
+  // Границы квадрата
+  const l = square.x;
+  const r = square.x + square.w;
+  const t = square.y;
+  const b = square.y + square.h;
 
-  square.x = left; square.y = top; square.w = w; square.h = h;
-  drawSquareShape(left, top, w, h);
+  // Сбрасываем захват и заново проверяем каждый край
+  const grabbed = { left: false, right: false, top: false, bottom: false };
+  let edgeMoved = false;
+
+  for (const p of points) {
+    // Проверяем: попадает ли палец в "полосу" около каждого края
+    // Левый край: x близко к l, y внутри вертикального диапазона (+ запас)
+    if (Math.abs(p.x - l) < SQUARE_GRAB_DISTANCE &&
+        p.y > t - SQUARE_GRAB_DISTANCE &&
+        p.y < b + SQUARE_GRAB_DISTANCE) {
+      grabbed.left = true;
+      // Двигаем левый край
+      const newL = p.x;
+      const newW = square.x + square.w - newL;
+      if (newW >= SQUARE_MIN_SIZE) {
+        square.x = newL;
+        square.w = newW;
+      }
+      edgeMoved = true;
+    }
+
+    // Правый край
+    if (Math.abs(p.x - r) < SQUARE_GRAB_DISTANCE &&
+        p.y > t - SQUARE_GRAB_DISTANCE &&
+        p.y < b + SQUARE_GRAB_DISTANCE) {
+      grabbed.right = true;
+      const newW = p.x - square.x;
+      if (newW >= SQUARE_MIN_SIZE) {
+        square.w = newW;
+      }
+      edgeMoved = true;
+    }
+
+    // Верхний край
+    if (Math.abs(p.y - t) < SQUARE_GRAB_DISTANCE &&
+        p.x > l - SQUARE_GRAB_DISTANCE &&
+        p.x < r + SQUARE_GRAB_DISTANCE) {
+      grabbed.top = true;
+      const newT = p.y;
+      const newH = square.y + square.h - newT;
+      if (newH >= SQUARE_MIN_SIZE) {
+        square.y = newT;
+        square.h = newH;
+      }
+      edgeMoved = true;
+    }
+
+    // Нижний край
+    if (Math.abs(p.y - b) < SQUARE_GRAB_DISTANCE &&
+        p.x > l - SQUARE_GRAB_DISTANCE &&
+        p.x < r + SQUARE_GRAB_DISTANCE) {
+      grabbed.bottom = true;
+      const newH = p.y - square.y;
+      if (newH >= SQUARE_MIN_SIZE) {
+        square.h = newH;
+      }
+      edgeMoved = true;
+    }
+  }
+
+  square.grabbed = grabbed;
+
+  // Показываем индикатор "схвачено", если хотя бы один край двигается
+  return edgeMoved;
 }
 
-function drawSquareShape(left, top, w, h) {
+function drawSquareOverlay(handsData) {
+  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  if (!square.active) return;
+
+  // Обновляем квадрат, если палец схватил край
+  tryGrabSquare(handsData);
+
+  // Рисуем квадрат
+  const { x, y, w, h } = square;
+
   overlayCtx.save();
   overlayCtx.shadowColor = 'rgba(255,204,0,0.7)';
   overlayCtx.shadowBlur = 20;
 
-  overlayCtx.fillStyle = 'rgba(255,204,0,0.15)';
-  overlayCtx.fillRect(left, top, w, h);
+  // Заливка
+  overlayCtx.fillStyle = 'rgba(255,204,0,0.12)';
+  overlayCtx.fillRect(x, y, w, h);
 
+  // Контур
   overlayCtx.strokeStyle = SQUARE_COLOR;
   overlayCtx.lineWidth = 5;
-  overlayCtx.strokeRect(left, top, w, h);
+  overlayCtx.strokeRect(x, y, w, h);
 
+  // Подсветка "схваченных" краёв
+  overlayCtx.lineWidth = 8;
+  overlayCtx.strokeStyle = '#fff700';
+  overlayCtx.shadowColor = '#fff700';
+  overlayCtx.shadowBlur = 25;
+
+  if (square.grabbed.left) {
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(x, y);
+    overlayCtx.lineTo(x, y + h);
+    overlayCtx.stroke();
+  }
+  if (square.grabbed.right) {
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(x + w, y);
+    overlayCtx.lineTo(x + w, y + h);
+    overlayCtx.stroke();
+  }
+  if (square.grabbed.top) {
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(x, y);
+    overlayCtx.lineTo(x + w, y);
+    overlayCtx.stroke();
+  }
+  if (square.grabbed.bottom) {
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(x, y + h);
+    overlayCtx.lineTo(x + w, y + h);
+    overlayCtx.stroke();
+  }
+
+  // Уголки
+  overlayCtx.shadowBlur = 20;
+  overlayCtx.shadowColor = 'rgba(255,204,0,0.7)';
   overlayCtx.fillStyle = SQUARE_COLOR;
   for (const [cx, cy] of [
-    [left, top], [left + w, top], [left, top + h], [left + w, top + h]
+    [x, y], [x + w, y], [x, y + h], [x + w, y + h]
   ]) {
     overlayCtx.beginPath();
-    overlayCtx.arc(cx, cy, 9, 0, Math.PI * 2);
+    overlayCtx.arc(cx, cy, 10, 0, Math.PI * 2);
     overlayCtx.fill();
   }
 
+  // Подпись с размерами
   overlayCtx.shadowBlur = 0;
   overlayCtx.fillStyle = '#fff';
   overlayCtx.font = 'bold 14px sans-serif';
   overlayCtx.textAlign = 'center';
-  overlayCtx.fillText(`${Math.round(w)} × ${Math.round(h)}`, left + w / 2, top - 12);
+  overlayCtx.fillText(`${Math.round(w)} × ${Math.round(h)}`, x + w / 2, y - 14);
+
+  // Подсказка при старте
+  if (!square.grabbed.left && !square.grabbed.right &&
+      !square.grabbed.top && !square.grabbed.bottom) {
+    overlayCtx.fillStyle = 'rgba(255,255,255,0.85)';
+    overlayCtx.font = 'bold 16px sans-serif';
+    overlayCtx.fillText('Поднесите палец к краю квадрата, чтобы растянуть',
+                        canvasWidth / 2, canvasHeight - 100);
+  }
 
   overlayCtx.restore();
 }
@@ -444,6 +573,41 @@ function onResults(results) {
 }
 
 // ============================================================
+// КНОПКИ
+// ============================================================
+trackBtn.addEventListener('click', () => {
+  mode = (mode === 'track') ? 'draw' : 'track';
+  isDrawing = false; lastPoint = null;
+  trackBtn.classList.toggle('active', mode === 'track');
+  squareBtn.classList.toggle('active', mode === 'square');
+  hands.setOptions({ maxNumHands: mode === 'square' ? 2 : 1 });
+  updateModeIndicator();
+  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  setStatus(mode === 'track'
+    ? '👋 <span class="highlight">Отслеживание</span>: кружки на кончиках пальцев'
+    : '✋ Ведите указательным пальцем');
+});
+
+squareBtn.addEventListener('click', () => {
+  mode = (mode === 'square') ? 'draw' : 'square';
+  isDrawing = false; lastPoint = null;
+  squareBtn.classList.toggle('active', mode === 'square');
+  trackBtn.classList.toggle('active', mode === 'track');
+  hands.setOptions({ maxNumHands: mode === 'square' ? 2 : 1 });
+  updateModeIndicator();
+  overlayCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  if (mode === 'square') {
+    initSquare();
+    setStatus('⬜ <span class="highlight">Квадрат</span>: поднесите палец к краю и растяните');
+  } else {
+    square.active = false;
+    setStatus('✋ Ведите указательным пальцем');
+  }
+});
+
+// ============================================================
 // MEDIAPIPE
 // ============================================================
 const hands = new Hands({
@@ -456,7 +620,7 @@ hands.setOptions({
   modelComplexity: 0,
   minDetectionConfidence: 0.6,
   minTrackingConfidence: 0.6,
-  selfieMode: false,           // ВАЖНО: не просить MediaPipe зеркалить
+  selfieMode: false,
 });
 
 hands.onResults(onResults);
@@ -485,6 +649,15 @@ async function startCamera() {
     video.srcObject = stream;
     await new Promise(r => {
       video.onloadedmetadata = () => video.play().then(r).catch(r);
+    });
+
+    // Ждём, пока реально появятся videoWidth/videoHeight
+    await new Promise(r => {
+      const check = () => {
+        if (video.videoWidth > 0) r();
+        else setTimeout(check, 50);
+      };
+      check();
     });
 
     resizeCanvases();
